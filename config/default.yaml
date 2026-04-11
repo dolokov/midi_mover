@@ -22,9 +22,13 @@ pose:
 
 liveview:
   left_panel_ratio: 0.6
-  player_crop_margin: 0.2
   crop_smoothing_factor: 0.35
   crop_max_jump_ratio: 0.18
+  eye_target_x_ratio: 0.5
+  eye_target_y_ratio: 0.15 #0.32
+  eye_crop_width_multiplier: 12. #6.5
+  eye_crop_above_multiplier: 8.0 #3.2
+  eye_crop_below_multiplier: 2.0 #5.0
   circle_visuals:
     idle:
       outline_color: [96, 165, 250]
@@ -47,13 +51,13 @@ liveview:
   debug:
     show_head_center: false
     show_wrist_markers: true
-  circle_radius: 42
-  circle_offsets:
-    "1": [-180, -10]
-    "2": [-90, -105]
-    "3": [0, -145]
-    "4": [90, -105]
-    "5": [180, -10]
+  circle_radius_percent: 5.83
+  circle_offsets_percent:
+    "1": [-36.0, -2.0]
+    "2": [-18.0, -21.0]
+    "3": [0.0, -29.0]
+    "4": [18.0, -21.0]
+    "5": [36.0, -2.0]
   circle_stroke_width: 4
   label_font_size: 24
   wrist_marker_radius: 10
@@ -136,6 +140,8 @@ audio:
     gesture_volume: 0.8
     max_concurrent_sounds: 6
     restart_busy_channel: true
+    sustain_while_inside: true
+    release_fade_ms: 120
 
 highscore:
   list_size: 10

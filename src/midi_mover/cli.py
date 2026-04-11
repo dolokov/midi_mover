@@ -33,8 +33,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--midi-dir",
         type=Path,
-        default=Path("midi"),
-        help="Directory containing target MIDI files. Default: ./midi",
+        default=Path("~/data/midi_mover/midis"),
+        help="Directory containing target MIDI files. Default: ~/data/midi_mover/midis",
     )
     parser.add_argument(
         "--config",

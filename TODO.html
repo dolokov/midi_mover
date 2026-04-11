@@ -251,7 +251,7 @@ data/
     </div>
 
     <div class="card">
-      <h2>Epic 1: liveview with circles and keypoint detection and visualization and also music playing <span class="status todo">TODO</span></h2>
+      <h2>Epic 1: liveview with circles and keypoint detection and visualization and also music playing <span class="status done">DONE</span></h2>
       <p>Goal: create the real-time camera, pose, circle-overlay, and immediate audio foundation. This epic is complete when the player can see themselves, tracking is stable, the five circles behave correctly, and circle interactions can trigger audible notes with pygame.</p>
 
       <div class="subcard">
@@ -275,7 +275,7 @@ data/
       </div>
 
       <div class="subcard">
-        <h3>Task 1.2 — Camera ingest, primary-person selection, and player-centered crop <span class="status todo">TODO</span></h3>
+        <h3>Task 1.2 — Camera ingest, primary-person selection, and player-centered crop <span class="status done">DONE</span></h3>
         <p><strong>Context:</strong> The left panel must show a stable, person-centered live view. The game must not simply dump the raw camera feed.</p>
         <p><strong>Requirements:</strong></p>
         <ul>
@@ -292,12 +292,19 @@ data/
           <li><strong>Subtask 1.2.3</strong> <span class="status done">DONE</span> — Implement person-centered crop extraction and scaling to full panel height while preserving aspect ratio.</li>
           <li><strong>Subtask 1.2.4</strong> <span class="status done">DONE</span> — Implement left/right padding to fill the full 60% gameplay panel width and make the padding color configurable in YAML.</li>
           <li><strong>Subtask 1.2.5</strong> <span class="status done">DONE</span> — Smooth crop movement enough to avoid jitter while keeping motion responsive for gameplay.</li>
+          <li><strong>Subtask 1.2.6</strong> <span class="status done">DONE</span> — Replace the one-frame liveview preview path with a persistent main runtime loop that continuously pumps pygame events, reads camera frames, runs pose inference, redraws the liveview, and exits only on explicit quit input such as window close or ESC, while preserving a separate smoke-test path for non-interactive regression checks.</li>
         </ol>
-        <p><strong>Definition of done:</strong> The left panel always shows a readable player-centered live view at full height with stable framing and correct panel fill behavior.</p>
+        <h4>Follow-up subtasks requested after initial completion</h4>
+        <ol>
+          <li><strong>Subtask 1.2.7</strong> <span class="status done">DONE</span> — Replace bbox-driven liveview framing with an eye-anchored crop model. The crop must target a configurable eye-center anchor inside the crop instead of centering on the full body/person box.</li>
+          <li><strong>Subtask 1.2.8</strong> <span class="status done">DONE</span> — Size the liveview crop using configurable multipliers of the left-eye/right-eye distance, including separate horizontal, upward, and downward margins in YAML.</li>
+          <li><strong>Subtask 1.2.9</strong> <span class="status done">DONE</span> — Preserve smooth crop motion while smoothing toward the new eye-based target crop, and define safe fallback behavior when one or both eyes are temporarily unavailable.</li>
+        </ol>
+        <p><strong>Definition of done:</strong> The left panel always shows a readable player-centered live view at full height with stable framing, correct panel fill behavior, and continuous updates until the user explicitly exits.</p>
       </div>
 
       <div class="subcard">
-        <h3>Task 1.3 — Pose keypoints, head center, circle geometry, and overlay rendering <span class="status todo">TODO</span></h3>
+        <h3>Task 1.3 — Pose keypoints, head center, circle geometry, and overlay rendering <span class="status done">DONE</span></h3>
         <p><strong>Context:</strong> The core of the interaction is visual clarity. The player must immediately understand where their hands are relative to the five circles.</p>
         <p><strong>Requirements:</strong></p>
         <ul>
@@ -320,7 +327,7 @@ data/
       </div>
 
       <div class="subcard">
-        <h3>Task 1.4 — Hand-in-circle event detection and immediate note triggering <span class="status todo">TODO</span></h3>
+        <h3>Task 1.4 — Hand-in-circle event detection and immediate note triggering <span class="done">DONE</span></h3>
         <p><strong>Context:</strong> Before target-song gameplay exists, the app still needs a reliable local interaction signal: “left or right hand is inside circle N.” This becomes the basis for later judgment logic.</p>
         <p><strong>Requirements:</strong></p>
         <ul>
@@ -340,7 +347,7 @@ data/
       </div>
 
       <div class="subcard">
-        <h3>Task 1.5 — Pygame audio output for immediate player note feedback <span class="status todo">TODO</span></h3>
+        <h3>Task 1.5 — Pygame audio output for immediate player note feedback <span class="status done">DONE</span></h3>
         <p><strong>Context:</strong> Even before target-song scoring exists, entering circles must produce audible note feedback. This is the “music playing” requirement for Epic 1.</p>
         <p><strong>Requirements:</strong></p>
         <ul>
@@ -355,6 +362,12 @@ data/
           <li><strong>Subtask 1.5.2</strong> <span class="status done">DONE</span> — Implement a gesture-token-to-sound mapping for all ten gesture tokens <code>L1..L5</code> and <code>R1..R5</code>.</li>
           <li><strong>Subtask 1.5.3</strong> <span class="status done">DONE</span> — Trigger sound playback from hand-in-circle events with stable timing and without runaway retriggering.</li>
           <li><strong>Subtask 1.5.4</strong> <span class="status done">DONE</span> — Add YAML-tuneable note duration, volume, and concurrency limits, and verify that repeated gameplay interaction remains responsive.</li>
+        </ol>
+        <h4>Follow-up subtasks requested after initial completion</h4>
+        <ol>
+          <li><strong>Subtask 1.5.5</strong> <span class="status done">DONE</span> — Add sustained hand-in-circle playback so a gesture sound starts on enter and continues while the hand remains inside the circle instead of only firing once.</li>
+          <li><strong>Subtask 1.5.6</strong> <span class="status todo">TODO</span> — Track active playback channels per gesture token and stop or fade them out cleanly on exit transitions without runaway overlaps.</li>
+          <li><strong>Subtask 1.5.7</strong> <span class="status todo">TODO</span> — Move sustained playback policy into YAML, including loop/hold enablement and release fade timing, and verify the full runtime remains responsive.</li>
         </ol>
         <p><strong>Definition of done:</strong> The player can move left or right wrist into a circle and hear a predictable sound that matches the gesture token mapping.</p>
       </div>

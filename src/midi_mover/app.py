@@ -9,36 +9,28 @@ from typing import Any
 
 from midi_mover.camera import CameraFrameError, CameraFrameReader
 from midi_mover.cli import StartupOptions, parse_args
-from midi_mover.circles import compute_circle_geometries
 from midi_mover.config import AppConfig, ConfigError, load_config
 from midi_mover.audio import (
     AudioStartupError,
+    GesturePlaybackController,
     LoadedGestureSounds,
     build_gesture_sounds,
     initialize_audio_output,
-    trigger_gesture_sounds,
 )
 from midi_mover.interaction_visuals import (
     CircleVisualStateTracker,
-    CircleVisualStyle,
     HandCircleTransitionTracker,
-    describe_transition_snapshot,
-    detect_hand_circle_interactions,
 )
-from midi_mover.liveview import (
-    CropSmoother,
-    compute_liveview_layout,
-    compute_liveview_layout_for_crop,
-    crop_camera_frame,
-    draw_liveview_overlay,
-)
+from midi_mover.liveview import CropSmoother
 from midi_mover.logging_utils import configure_logging
 from midi_mover.pose import (
     GameplayKeypointTracker,
-    PrimaryPersonSelection,
     PrimaryPersonTracker,
-    PoseProcessingError,
-    run_pose_inference,
+)
+from midi_mover.runtime_loop import (
+    LiveviewRuntimeError,
+    render_liveview_frame,
+    run_persistent_liveview_loop,
 )
 LOGGER = logging.getLogger("midi_mover")
 
@@ -60,6 +52,7 @@ class StartupResources:
     pygame_module: Any | None = None
     mixer_initialized: bool = False
     gesture_sounds: LoadedGestureSounds | None = None
+    gesture_playback_controller: GesturePlaybackController | None = None
 
     def cleanup(self) -> None:
         if self.camera is not None:
@@ -74,6 +67,15 @@ class StartupResources:
 
         if self.pygame_module is not None:
             if self.mixer_initialized:
+                if self.gesture_playback_controller is not None and self.gesture_sounds is not None:
+                    try:
+                        self.gesture_playback_controller.reset(
+                            fade_ms=self.gesture_sounds.playback_config.release_fade_ms,
+                        )
+                    except Exception:  # pragma: no cover - defensive cleanup
+                        LOGGER.exception("Failed to reset gesture playback controller during cleanup.")
+                    finally:
+                        self.gesture_playback_controller = None
                 try:
                     self.pygame_module.mixer.quit()
                 except Exception:  # pragma: no cover - defensive cleanup
@@ -159,6 +161,7 @@ def _initialize_pygame_mixer(config: AppConfig, resources: StartupResources) -> 
         pygame_module=pygame,
         audio_config=config.raw["audio"],
     )
+    resources.gesture_playback_controller = GesturePlaybackController()
 
 
 def _initialize_camera(options: StartupOptions, config: AppConfig) -> Any:
@@ -288,18 +291,6 @@ def _initialize_circle_visual_tracker(config: AppConfig) -> CircleVisualStateTra
     return tracker
 
 
-def _load_circle_visual_styles(config: AppConfig) -> dict[str, CircleVisualStyle]:
-    visuals = config.raw["liveview"]["circle_visuals"]
-    return {
-        state_name: CircleVisualStyle(
-            outline_color=tuple(visuals[state_name]["outline_color"]),
-            fill_color=tuple(visuals[state_name]["fill_color"]),
-            label_color=tuple(visuals[state_name]["label_color"]),
-        )
-        for state_name in ("idle", "active_contact", "hit_flash", "miss_flash")
-    }
-
-
 def discover_midi_files(midi_dir: Path, config: AppConfig) -> list[Path]:
     supported_extensions = {
         str(extension).lower() for extension in config.raw["midi"]["supported_extensions"]
@@ -339,146 +330,23 @@ def _render_liveview_preview(resources: StartupResources, config: AppConfig) -> 
     if resources.circle_visual_tracker is None:
         raise StartupError("Liveview preview failed: circle visual tracker was not initialized.")
 
-    padding_color = tuple(config.raw["liveview"]["padding_color"])
-    circle_visual_styles = _load_circle_visual_styles(config)
-    left_panel_ratio = float(config.raw["liveview"]["left_panel_ratio"])
-    crop_margin_ratio = float(config.raw["liveview"]["player_crop_margin"])
-    left_panel_width = int(resources.window.get_width() * left_panel_ratio)
-    left_panel_height = resources.window.get_height()
-
     try:
-        frame = resources.frame_reader.read(resources.pygame_module)
-    except CameraFrameError as exc:
-        raise StartupError(f"Liveview preview failed while reading camera frame: {exc}") from exc
-
-    try:
-        pose_result = run_pose_inference(
-            resources.pose_model,
-            frame.bgr_frame,
-            conf=float(config.raw["pose"]["confidence_threshold"]),
-            iou=float(config.raw["pose"]["iou_threshold"]),
-        )
-    except PoseProcessingError as exc:
-        raise StartupError(f"Liveview preview failed during pose inference: {exc}") from exc
-
-    selection = resources.primary_person_tracker.select(pose_result)
-    gameplay_keypoints = resources.gameplay_keypoint_tracker.extract(pose_result, selection)
-    circle_geometries = compute_circle_geometries(
-        head_center_xy=getattr(gameplay_keypoints, "head_center_xy", None),
-        circle_offsets=config.raw["liveview"]["circle_offsets"],
-        circle_radius=int(config.raw["liveview"]["circle_radius"]),
-    )
-    interaction_snapshot = detect_hand_circle_interactions(
-        circle_geometries=circle_geometries,
-        gameplay_keypoints=gameplay_keypoints,
-    )
-    transition_snapshot = resources.interaction_transition_tracker.update(interaction_snapshot)
-    if resources.gesture_sounds is not None:
-        trigger_gesture_sounds(
+        render_liveview_frame(
+            window=resources.window,
             pygame_module=resources.pygame_module,
-            transition_snapshot=transition_snapshot,
+            frame_reader=resources.frame_reader,
+            pose_model=resources.pose_model,
+            primary_person_tracker=resources.primary_person_tracker,
+            gameplay_keypoint_tracker=resources.gameplay_keypoint_tracker,
+            interaction_transition_tracker=resources.interaction_transition_tracker,
+            crop_smoother=resources.crop_smoother,
+            circle_visual_tracker=resources.circle_visual_tracker,
+            config=config,
             gesture_sounds=resources.gesture_sounds,
+            gesture_playback_controller=resources.gesture_playback_controller,
         )
-    circle_visual_states = resources.circle_visual_tracker.update(
-        circle_geometries=circle_geometries,
-        gameplay_keypoints=gameplay_keypoints,
-        interaction_snapshot=interaction_snapshot,
-    )
-    target_layout = compute_liveview_layout(
-        frame_width=frame.width,
-        frame_height=frame.height,
-        selection=selection,
-        crop_margin_ratio=crop_margin_ratio,
-        target_panel_width=left_panel_width,
-        target_panel_height=left_panel_height,
-    )
-    smoothed_crop = resources.crop_smoother.smooth(
-        target_crop=target_layout.crop,
-        frame_width=frame.width,
-        frame_height=frame.height,
-    )
-    cropped_frame = crop_camera_frame(frame, smoothed_crop, resources.pygame_module)
-    layout = compute_liveview_layout_for_crop(
-        crop=smoothed_crop,
-        target_panel_width=left_panel_width,
-        target_panel_height=left_panel_height,
-    )
-
-    resources.window.fill((0, 0, 0))
-    left_panel_rect = resources.pygame_module.Rect(0, 0, left_panel_width, left_panel_height)
-    resources.window.fill(padding_color, left_panel_rect)
-
-    scaled_surface = resources.pygame_module.transform.smoothscale(
-        cropped_frame.render_surface,
-        (layout.scaled_width, layout.scaled_height),
-    )
-    draw_liveview_overlay(
-        scaled_surface,
-        source_width=cropped_frame.width,
-        source_height=cropped_frame.height,
-        target_width=layout.scaled_width,
-        target_height=layout.scaled_height,
-        selection=selection,
-        gameplay_keypoints=gameplay_keypoints,
-        circle_geometries=circle_geometries,
-        circle_visual_states=circle_visual_states,
-        circle_visual_styles=circle_visual_styles,
-        pygame_module=resources.pygame_module,
-        crop_origin=(layout.crop.x, layout.crop.y),
-        circle_stroke_width=int(config.raw["liveview"]["circle_stroke_width"]),
-        label_font_size=int(config.raw["liveview"]["label_font_size"]),
-        show_head_center_marker=bool(config.raw["liveview"]["debug"]["show_head_center"]),
-        show_wrist_markers=bool(config.raw["liveview"]["debug"]["show_wrist_markers"]),
-        wrist_marker_radius=int(config.raw["liveview"]["wrist_marker_radius"]),
-        wrist_marker_outline_width=int(config.raw["liveview"]["wrist_marker_outline_width"]),
-    )
-
-    if layout.visible_width < layout.scaled_width:
-        visible_surface = scaled_surface.subsurface(
-            resources.pygame_module.Rect(
-                layout.source_offset_x,
-                0,
-                layout.visible_width,
-                layout.scaled_height,
-            )
-        )
-    else:
-        visible_surface = scaled_surface
-
-    resources.window.blit(visible_surface, (layout.blit_x, layout.blit_y))
-    resources.pygame_module.display.flip()
-
-    LOGGER.info(
-        "Prepared person-centered liveview crop: frame=%sx%s crop=(x=%s y=%s w=%s h=%s) scaled=%sx%s visible_width=%s blit=(%s,%s) source_offset_x=%s mirrored=%s left_panel=%sx%s primary_person=%s keypoints=%s transitions=%s.",
-        frame.width,
-        frame.height,
-        layout.crop.x,
-        layout.crop.y,
-        layout.crop.width,
-        layout.crop.height,
-        layout.scaled_width,
-        layout.scaled_height,
-        layout.visible_width,
-        layout.blit_x,
-        layout.blit_y,
-        layout.source_offset_x,
-        frame.mirrored,
-        left_panel_width,
-        left_panel_height,
-        _format_primary_person_log(selection),
-        resources.gameplay_keypoint_tracker.describe(gameplay_keypoints),
-        describe_transition_snapshot(transition_snapshot),
-    )
-
-
-def _format_primary_person_log(selection: PrimaryPersonSelection | None) -> str:
-    if selection is None:
-        return "none"
-    candidate = selection.candidate
-    return (
-        f"index={candidate.index} track_id={candidate.track_id} area={candidate.area:.1f} "
-        f"confidence={candidate.confidence:.3f} reason={selection.reason}"
-    )
+    except LiveviewRuntimeError as exc:
+        raise StartupError(str(exc)) from exc
 
 
 def run_smoke_test(
@@ -527,6 +395,48 @@ def run_smoke_test(
     LOGGER.info("Smoke test completed successfully and exited cleanly.")
 
 
+def run_interactive_runtime(
+    options: StartupOptions,
+    config: AppConfig,
+    resources: StartupResources,
+) -> None:
+    LOGGER.info("Running persistent interactive liveview runtime.")
+    discover_midi_files(options.midi_dir, config)
+
+    required = {
+        "window": resources.window,
+        "pose_model": resources.pose_model,
+        "pygame_module": resources.pygame_module,
+        "frame_reader": resources.frame_reader,
+        "primary_person_tracker": resources.primary_person_tracker,
+        "gameplay_keypoint_tracker": resources.gameplay_keypoint_tracker,
+        "interaction_transition_tracker": resources.interaction_transition_tracker,
+        "crop_smoother": resources.crop_smoother,
+        "circle_visual_tracker": resources.circle_visual_tracker,
+    }
+    missing = [name for name, value in required.items() if value is None]
+    if missing:
+        raise StartupError(f"Interactive runtime failed: missing initialized resources: {', '.join(missing)}.")
+
+    try:
+        run_persistent_liveview_loop(
+            window=resources.window,
+            pygame_module=resources.pygame_module,
+            frame_reader=resources.frame_reader,
+            pose_model=resources.pose_model,
+            primary_person_tracker=resources.primary_person_tracker,
+            gameplay_keypoint_tracker=resources.gameplay_keypoint_tracker,
+            interaction_transition_tracker=resources.interaction_transition_tracker,
+            crop_smoother=resources.crop_smoother,
+            circle_visual_tracker=resources.circle_visual_tracker,
+            config=config,
+            gesture_sounds=resources.gesture_sounds,
+            gesture_playback_controller=resources.gesture_playback_controller,
+        )
+    except LiveviewRuntimeError as exc:
+        raise StartupError(str(exc)) from exc
+
+
 def _log_startup(options: StartupOptions) -> None:
     LOGGER.info("Starting midi_mover startup skeleton")
     LOGGER.info("camera_id=%s", options.camera_id)
@@ -545,9 +455,9 @@ def _log_config_summary(config: AppConfig) -> None:
         raw["pose"]["model_name"],
     )
     LOGGER.info(
-        "Liveview ratio=%s circle_radius=%s supported_midi_extensions=%s",
+        "Liveview ratio=%s circle_radius_percent=%s supported_midi_extensions=%s",
         raw["liveview"]["left_panel_ratio"],
-        raw["liveview"]["circle_radius"],
+        raw["liveview"]["circle_radius_percent"],
         ", ".join(raw["midi"]["supported_extensions"]),
     )
 
@@ -585,7 +495,7 @@ def run(argv: list[str] | None = None) -> int:
         if options.smoke_test:
             run_smoke_test(options, config, resources)
         else:
-            _render_liveview_preview(resources, config)
+            run_interactive_runtime(options, config, resources)
     except StartupError as exc:
         LOGGER.error("Startup initialization failed: %s", exc)
         return 3
@@ -596,5 +506,5 @@ def run(argv: list[str] | None = None) -> int:
     if options.smoke_test:
         LOGGER.info("Subtask 1.1.4 complete: smoke-test path exercised startup subsystems and exited cleanly.")
     else:
-        LOGGER.info("Subtask 1.1.3 complete: runtime subsystems initialized and cleaned up successfully.")
+        LOGGER.info("Subtask 1.2.6 complete: persistent liveview runtime loop ran until explicit exit and cleaned up successfully.")
     return 0

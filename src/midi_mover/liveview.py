@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from midi_mover.interaction_visuals import CircleVisualState, CircleVisualStyle
-from midi_mover.pose import PrimaryPersonSelection
+from midi_mover.pose import GameplayKeypoints, PrimaryPersonSelection
 
 
 @dataclass(frozen=True)
@@ -92,22 +92,31 @@ def compute_liveview_layout(
     frame_width: int,
     frame_height: int,
     selection: PrimaryPersonSelection | None,
-    crop_margin_ratio: float,
+    gameplay_keypoints: GameplayKeypoints | None,
+    eye_target_x_ratio: float,
+    eye_target_y_ratio: float,
+    eye_crop_width_multiplier: float,
+    eye_crop_above_multiplier: float,
+    eye_crop_below_multiplier: float,
     target_panel_width: int,
     target_panel_height: int,
 ) -> LiveviewLayout:
-    """Compute a person-centered crop and full-height scaled size.
+    """Compute an eye-centered crop and full-height scaled size.
 
-    The crop is centered on the selected player's bounding box, expanded by the
-    configured margin ratio, and clamped to the source frame bounds. When no
-    player is currently selected, the full frame is used as a safe fallback.
+    When eye landmarks are unavailable, the full frame is used as a safe
+    fallback.
     """
 
     crop = compute_person_crop(
         frame_width=frame_width,
         frame_height=frame_height,
         selection=selection,
-        crop_margin_ratio=crop_margin_ratio,
+        gameplay_keypoints=gameplay_keypoints,
+        eye_target_x_ratio=eye_target_x_ratio,
+        eye_target_y_ratio=eye_target_y_ratio,
+        eye_crop_width_multiplier=eye_crop_width_multiplier,
+        eye_crop_above_multiplier=eye_crop_above_multiplier,
+        eye_crop_below_multiplier=eye_crop_below_multiplier,
     )
     return compute_liveview_layout_for_crop(
         crop=crop,
@@ -159,9 +168,14 @@ def compute_person_crop(
     frame_width: int,
     frame_height: int,
     selection: PrimaryPersonSelection | None,
-    crop_margin_ratio: float,
+    gameplay_keypoints: GameplayKeypoints | None,
+    eye_target_x_ratio: float,
+    eye_target_y_ratio: float,
+    eye_crop_width_multiplier: float,
+    eye_crop_above_multiplier: float,
+    eye_crop_below_multiplier: float,
 ) -> CropRect:
-    """Return a clamped crop rectangle centered on the primary person."""
+    """Return a clamped crop rectangle driven by the detected eye landmarks."""
 
     safe_frame_width = max(1, int(frame_width))
     safe_frame_height = max(1, int(frame_height))
@@ -169,27 +183,26 @@ def compute_person_crop(
     if selection is None:
         return CropRect(x=0, y=0, width=safe_frame_width, height=safe_frame_height)
 
-    x1, y1, x2, y2 = selection.candidate.bbox_xyxy
-    bbox_width = max(1.0, float(x2) - float(x1))
-    bbox_height = max(1.0, float(y2) - float(y1))
-    margin_ratio = max(0.0, float(crop_margin_ratio))
+    eye_center = getattr(gameplay_keypoints, "head_center_xy", None)
+    left_eye = getattr(gameplay_keypoints, "left_eye", None)
+    right_eye = getattr(gameplay_keypoints, "right_eye", None)
+    if eye_center is not None and left_eye is not None and right_eye is not None:
+        eye_distance = max(1.0, abs(float(right_eye.xy[0]) - float(left_eye.xy[0])))
+        width = max(1, int(round(eye_distance * max(1.0, float(eye_crop_width_multiplier)))))
+        above = max(1.0, eye_distance * max(0.5, float(eye_crop_above_multiplier)))
+        below = max(1.0, eye_distance * max(0.5, float(eye_crop_below_multiplier)))
+        height = max(1, int(round(above + below)))
+        target_x_ratio = _clamp01(eye_target_x_ratio)
+        target_y_ratio = _clamp01(eye_target_y_ratio)
+        left = int(round(float(eye_center[0]) - width * target_x_ratio))
+        top = int(round(float(eye_center[1]) - height * target_y_ratio))
+        return clamp_crop_rect(
+            CropRect(x=left, y=top, width=width, height=height),
+            frame_width=safe_frame_width,
+            frame_height=safe_frame_height,
+        )
 
-    expanded_width = bbox_width * (1.0 + margin_ratio * 2.0)
-    expanded_height = bbox_height * (1.0 + margin_ratio * 2.0)
-
-    center_x = (float(x1) + float(x2)) / 2.0
-    center_y = (float(y1) + float(y2)) / 2.0
-
-    left = int(round(center_x - expanded_width / 2.0))
-    top = int(round(center_y - expanded_height / 2.0))
-    width = max(1, int(round(expanded_width)))
-    height = max(1, int(round(expanded_height)))
-
-    return clamp_crop_rect(
-        CropRect(x=left, y=top, width=width, height=height),
-        frame_width=safe_frame_width,
-        frame_height=safe_frame_height,
-    )
+    return CropRect(x=0, y=0, width=safe_frame_width, height=safe_frame_height)
 
 
 def clamp_crop_rect(crop: CropRect, *, frame_width: int, frame_height: int) -> CropRect:

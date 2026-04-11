@@ -226,7 +226,13 @@ Install the required packages inside that environment.
 A likely starting point is:
 
 ```bash
+python -m pip install torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0 \
+  --index-url https://download.pytorch.org/whl/cu128
+
+python -m pip install ultralytics
 pip install ultralytics opencv-python pygame mido pyyaml pillow numpy
+conda install setuptools tensorboard
+
 ```
 
 If extra packages are required during implementation, document them and keep the environment reproducible.

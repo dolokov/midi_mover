@@ -337,6 +337,7 @@ def detect_hand_circle_interactions(
     circle_geometries: tuple[CircleGeometry, ...],
     gameplay_keypoints: GameplayKeypoints | None,
     now_monotonic: float | None = None,
+    swap_hands: bool = False,
 ) -> InteractionStateSnapshot:
     """Build a structured per-hand occupancy snapshot for all gameplay circles."""
 
@@ -345,6 +346,8 @@ def detect_hand_circle_interactions(
         timestamp = gameplay_keypoints.captured_at_monotonic
     left_wrist = getattr(gameplay_keypoints, "left_wrist", None)
     right_wrist = getattr(gameplay_keypoints, "right_wrist", None)
+    if swap_hands:
+        left_wrist, right_wrist = right_wrist, left_wrist
     left_hand = _build_hand_interaction_state("L", left_wrist, circle_geometries)
     right_hand = _build_hand_interaction_state("R", right_wrist, circle_geometries)
     active_tokens = left_hand.active_tokens + right_hand.active_tokens

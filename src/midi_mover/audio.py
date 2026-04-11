@@ -77,6 +77,87 @@ class AudioPlaybackConfig:
     gesture_volume: float
     max_concurrent_sounds: int
     restart_busy_channel: bool
+    sustain_while_inside: bool
+    release_fade_ms: int
+
+
+@dataclass
+class ActiveGesturePlayback:
+    """One currently looping gesture playback bound to a token."""
+
+    token: str
+    channel: Any
+
+
+class GesturePlaybackController:
+    """Manage gesture sound lifecycle across enter/stay/exit transitions."""
+
+    def __init__(self) -> None:
+        self._active: dict[str, ActiveGesturePlayback] = {}
+
+    def reset(self, *, fade_ms: int = 0) -> None:
+        for playback in self._active.values():
+            try:
+                if fade_ms > 0:
+                    playback.channel.fadeout(fade_ms)
+                else:
+                    playback.channel.stop()
+            except Exception:
+                LOGGER.exception("Failed to stop active gesture playback for %s during reset.", playback.token)
+        self._active.clear()
+
+    def update(
+        self,
+        *,
+        pygame_module: Any,
+        transition_snapshot: InteractionTransitionSnapshot,
+        gesture_sounds: LoadedGestureSounds,
+    ) -> tuple[str, ...]:
+        playback_config = gesture_sounds.playback_config
+        if not playback_config.sustain_while_inside:
+            return trigger_gesture_sounds(
+                pygame_module=pygame_module,
+                transition_snapshot=transition_snapshot,
+                gesture_sounds=gesture_sounds,
+            )
+
+        started_tokens: list[str] = []
+        active_now: set[str] = set()
+        for hand_state in (transition_snapshot.left_hand, transition_snapshot.right_hand):
+            for lane_state in hand_state.lane_states:
+                if not lane_state.is_inside:
+                    continue
+                token = lane_state.token
+                active_now.add(token)
+                existing = self._active.get(token)
+                if existing is not None and existing.channel.get_busy():
+                    continue
+
+                sound = gesture_sounds.sound_for(token)
+                sound.set_volume(playback_config.gesture_volume)
+                channel = pygame_module.mixer.find_channel(force=playback_config.restart_busy_channel)
+                if channel is None:
+                    LOGGER.debug(
+                        "Skipped sustained gesture sound for %s because %s concurrent sounds are already active.",
+                        token,
+                        playback_config.max_concurrent_sounds,
+                    )
+                    continue
+                channel.play(sound, loops=-1)
+                self._active[token] = ActiveGesturePlayback(token=token, channel=channel)
+                started_tokens.append(token)
+
+        inactive_tokens = [token for token in self._active if token not in active_now]
+        for token in inactive_tokens:
+            playback = self._active.pop(token)
+            if playback_config.release_fade_ms > 0:
+                playback.channel.fadeout(playback_config.release_fade_ms)
+            else:
+                playback.channel.stop()
+
+        if started_tokens:
+            LOGGER.debug("Started sustained gesture sounds for active tokens: %s.", ", ".join(started_tokens))
+        return tuple(started_tokens)
 
 
 def initialize_audio_output(*, pygame_module: Any, audio_config: dict[str, Any]) -> AudioStartupStatus:
@@ -269,6 +350,8 @@ def _load_playback_config(audio_config: dict[str, Any]) -> AudioPlaybackConfig:
         gesture_volume=max(0.0, min(float(playback["gesture_volume"]), 1.0)),
         max_concurrent_sounds=max(1, int(playback["max_concurrent_sounds"])),
         restart_busy_channel=bool(playback["restart_busy_channel"]),
+        sustain_while_inside=bool(playback["sustain_while_inside"]),
+        release_fade_ms=max(0, int(playback["release_fade_ms"])),
     )
 
 

@@ -40,9 +40,13 @@ REQUIRED_PATHS: tuple[tuple[str, ...], ...] = (
     ("pose", "smoothing_factor"),
     ("pose", "lost_person_timeout_seconds"),
     ("liveview", "left_panel_ratio"),
-    ("liveview", "player_crop_margin"),
     ("liveview", "crop_smoothing_factor"),
     ("liveview", "crop_max_jump_ratio"),
+    ("liveview", "eye_target_x_ratio"),
+    ("liveview", "eye_target_y_ratio"),
+    ("liveview", "eye_crop_width_multiplier"),
+    ("liveview", "eye_crop_above_multiplier"),
+    ("liveview", "eye_crop_below_multiplier"),
     ("liveview", "circle_visuals", "idle", "outline_color"),
     ("liveview", "circle_visuals", "idle", "fill_color"),
     ("liveview", "circle_visuals", "idle", "label_color"),
@@ -59,8 +63,8 @@ REQUIRED_PATHS: tuple[tuple[str, ...], ...] = (
     ("liveview", "circle_visuals", "miss_flash_duration_ms"),
     ("liveview", "debug", "show_head_center"),
     ("liveview", "debug", "show_wrist_markers"),
-    ("liveview", "circle_radius"),
-    ("liveview", "circle_offsets"),
+    ("liveview", "circle_radius_percent"),
+    ("liveview", "circle_offsets_percent"),
     ("liveview", "circle_stroke_width"),
     ("liveview", "label_font_size"),
     ("liveview", "wrist_marker_radius"),
@@ -93,6 +97,8 @@ REQUIRED_PATHS: tuple[tuple[str, ...], ...] = (
     ("audio", "playback", "gesture_volume"),
     ("audio", "playback", "max_concurrent_sounds"),
     ("audio", "playback", "restart_busy_channel"),
+    ("audio", "playback", "sustain_while_inside"),
+    ("audio", "playback", "release_fade_ms"),
     ("highscore", "list_size"),
     ("highscore", "headshot_countdown_seconds"),
     ("highscore", "headshot_crop_margin"),
@@ -173,15 +179,26 @@ def _validate_value_types(payload: dict[str, Any]) -> None:
     )
 
     _require_numeric(payload["liveview"]["left_panel_ratio"], "liveview.left_panel_ratio")
-    _require_numeric(payload["liveview"]["player_crop_margin"], "liveview.player_crop_margin")
     _require_numeric(payload["liveview"]["crop_smoothing_factor"], "liveview.crop_smoothing_factor")
     _require_numeric(payload["liveview"]["crop_max_jump_ratio"], "liveview.crop_max_jump_ratio")
+    _require_numeric(payload["liveview"]["eye_target_x_ratio"], "liveview.eye_target_x_ratio")
+    _require_numeric(payload["liveview"]["eye_target_y_ratio"], "liveview.eye_target_y_ratio")
+    _require_numeric(payload["liveview"]["eye_crop_width_multiplier"], "liveview.eye_crop_width_multiplier")
+    _require_numeric(payload["liveview"]["eye_crop_above_multiplier"], "liveview.eye_crop_above_multiplier")
+    _require_numeric(payload["liveview"]["eye_crop_below_multiplier"], "liveview.eye_crop_below_multiplier")
     _require_type(payload["liveview"]["circle_visuals"], dict, "liveview.circle_visuals")
     _require_type(payload["liveview"]["debug"], dict, "liveview.debug")
     _require_type(payload["liveview"]["debug"]["show_head_center"], bool, "liveview.debug.show_head_center")
     _require_type(payload["liveview"]["debug"]["show_wrist_markers"], bool, "liveview.debug.show_wrist_markers")
-    _require_type(payload["liveview"]["circle_radius"], int, "liveview.circle_radius")
-    _require_type(payload["liveview"]["circle_offsets"], dict, "liveview.circle_offsets")
+    _require_numeric(
+        payload["liveview"]["circle_radius_percent"],
+        "liveview.circle_radius_percent",
+    )
+    _require_type(
+        payload["liveview"]["circle_offsets_percent"],
+        dict,
+        "liveview.circle_offsets_percent",
+    )
     _require_type(payload["liveview"]["circle_stroke_width"], int, "liveview.circle_stroke_width")
     _require_type(payload["liveview"]["label_font_size"], int, "liveview.label_font_size")
     _require_type(payload["liveview"]["wrist_marker_radius"], int, "liveview.wrist_marker_radius")
@@ -224,6 +241,8 @@ def _validate_value_types(payload: dict[str, Any]) -> None:
     _require_numeric(payload["audio"]["playback"]["gesture_volume"], "audio.playback.gesture_volume")
     _require_type(payload["audio"]["playback"]["max_concurrent_sounds"], int, "audio.playback.max_concurrent_sounds")
     _require_type(payload["audio"]["playback"]["restart_busy_channel"], bool, "audio.playback.restart_busy_channel")
+    _require_type(payload["audio"]["playback"]["sustain_while_inside"], bool, "audio.playback.sustain_while_inside")
+    _require_type(payload["audio"]["playback"]["release_fade_ms"], int, "audio.playback.release_fade_ms")
     _validate_gesture_sounds(payload["audio"]["gesture_sounds"])
 
     _require_type(payload["highscore"]["list_size"], int, "highscore.list_size")
@@ -238,18 +257,18 @@ def _validate_value_types(payload: dict[str, Any]) -> None:
     _require_type(payload["highscore"]["thumbnail_width"], int, "highscore.thumbnail_width")
     _require_type(payload["highscore"]["thumbnail_height"], int, "highscore.thumbnail_height")
 
-    circle_offsets = {
+    circle_offsets_percent = {
         _normalize_mapping_key(key): value
-        for key, value in payload["liveview"]["circle_offsets"].items()
+        for key, value in payload["liveview"]["circle_offsets_percent"].items()
     }
-    payload["liveview"]["circle_offsets"] = circle_offsets
+    payload["liveview"]["circle_offsets_percent"] = circle_offsets_percent
 
-    if sorted(circle_offsets.keys()) != ["1", "2", "3", "4", "5"]:
+    if sorted(circle_offsets_percent.keys()) != ["1", "2", "3", "4", "5"]:
         raise ConfigError(
-            "liveview.circle_offsets must define exactly the string keys '1' through '5'."
+            "liveview.circle_offsets_percent must define exactly the string keys '1' through '5'."
         )
-    for key, offset in circle_offsets.items():
-        _require_vector2(offset, f"liveview.circle_offsets.{key}")
+    for key, offset in circle_offsets_percent.items():
+        _require_vector2(offset, f"liveview.circle_offsets_percent.{key}")
 
 
 def _require_type(value: Any, expected_type: type, name: str) -> None:
