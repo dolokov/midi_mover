@@ -1,0 +1,443 @@
+"""YAML config loading and validation for midi_mover."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+import ast
+from pathlib import Path
+from typing import Any
+
+try:
+    import yaml  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover - exercised in environments without PyYAML
+    yaml = None
+
+
+class ConfigError(ValueError):
+    """Raised when the YAML config is missing required data."""
+
+
+@dataclass(frozen=True)
+class AppConfig:
+    raw: dict[str, Any]
+
+
+REQUIRED_PATHS: tuple[tuple[str, ...], ...] = (
+    ("app", "name"),
+    ("app", "window_width"),
+    ("app", "window_height"),
+    ("app", "target_fps"),
+    ("app", "debug"),
+    ("app", "logging_level"),
+    ("app", "random_seed"),
+    ("camera", "width"),
+    ("camera", "height"),
+    ("camera", "mirror"),
+    ("pose", "model_name"),
+    ("pose", "confidence_threshold"),
+    ("pose", "iou_threshold"),
+    ("pose", "device"),
+    ("pose", "smoothing_factor"),
+    ("pose", "lost_person_timeout_seconds"),
+    ("liveview", "left_panel_ratio"),
+    ("liveview", "player_crop_margin"),
+    ("liveview", "crop_smoothing_factor"),
+    ("liveview", "crop_max_jump_ratio"),
+    ("liveview", "circle_visuals", "idle", "outline_color"),
+    ("liveview", "circle_visuals", "idle", "fill_color"),
+    ("liveview", "circle_visuals", "idle", "label_color"),
+    ("liveview", "circle_visuals", "active_contact", "outline_color"),
+    ("liveview", "circle_visuals", "active_contact", "fill_color"),
+    ("liveview", "circle_visuals", "active_contact", "label_color"),
+    ("liveview", "circle_visuals", "hit_flash", "outline_color"),
+    ("liveview", "circle_visuals", "hit_flash", "fill_color"),
+    ("liveview", "circle_visuals", "hit_flash", "label_color"),
+    ("liveview", "circle_visuals", "miss_flash", "outline_color"),
+    ("liveview", "circle_visuals", "miss_flash", "fill_color"),
+    ("liveview", "circle_visuals", "miss_flash", "label_color"),
+    ("liveview", "circle_visuals", "hit_flash_duration_ms"),
+    ("liveview", "circle_visuals", "miss_flash_duration_ms"),
+    ("liveview", "debug", "show_head_center"),
+    ("liveview", "debug", "show_wrist_markers"),
+    ("liveview", "circle_radius"),
+    ("liveview", "circle_offsets"),
+    ("liveview", "circle_stroke_width"),
+    ("liveview", "label_font_size"),
+    ("liveview", "wrist_marker_radius"),
+    ("liveview", "wrist_marker_outline_width"),
+    ("liveview", "padding_color"),
+    ("gameplay", "hit_window_ms"),
+    ("gameplay", "early_late_tolerance_ms"),
+    ("gameplay", "debounce_ms"),
+    ("gameplay", "note_history_ms"),
+    ("gameplay", "lookahead_ms"),
+    ("gameplay", "score_values", "hit"),
+    ("gameplay", "score_values", "miss"),
+    ("gameplay", "score_values", "combo_bonus"),
+    ("midi", "supported_extensions"),
+    ("midi", "note_mapping"),
+    ("midi", "track_filter"),
+    ("midi", "channel_filter"),
+    ("midi", "minimum_note_duration_ms"),
+    ("midi", "ignore_meta_events"),
+    ("audio", "mixer", "frequency"),
+    ("audio", "mixer", "size"),
+    ("audio", "mixer", "channels"),
+    ("audio", "mixer", "buffer"),
+    ("audio", "mixer", "max_channels"),
+    ("audio", "gesture_sounds"),
+    ("audio", "volumes", "ui"),
+    ("audio", "volumes", "hit"),
+    ("audio", "volumes", "cue"),
+    ("audio", "playback", "note_duration_seconds"),
+    ("audio", "playback", "gesture_volume"),
+    ("audio", "playback", "max_concurrent_sounds"),
+    ("audio", "playback", "restart_busy_channel"),
+    ("highscore", "list_size"),
+    ("highscore", "headshot_countdown_seconds"),
+    ("highscore", "headshot_crop_margin"),
+    ("highscore", "thumbnail_width"),
+    ("highscore", "thumbnail_height"),
+)
+
+
+def load_config(config_path: Path) -> AppConfig:
+    """Load and validate the application YAML config."""
+    raw_text = config_path.read_text(encoding="utf-8")
+    if yaml is not None:
+        try:
+            payload = yaml.safe_load(raw_text)
+        except yaml.YAMLError as exc:
+            raise ConfigError(
+                f"Failed to parse YAML config at {config_path}: {exc}"
+            ) from exc
+    else:
+        payload = _load_simple_yaml(raw_text, config_path)
+
+    if payload is None:
+        raise ConfigError(
+            f"Config file {config_path} is empty. Add the required startup keys."
+        )
+    if not isinstance(payload, dict):
+        raise ConfigError(
+            f"Config file {config_path} must contain a top-level mapping/object."
+        )
+
+    _validate_required_paths(payload)
+    _validate_value_types(payload)
+    return AppConfig(raw=payload)
+
+
+def _validate_required_paths(payload: dict[str, Any]) -> None:
+    missing = []
+    for path in REQUIRED_PATHS:
+        if not _has_path(payload, path):
+            missing.append(".".join(path))
+
+    if missing:
+        joined = "\n - ".join([""] + missing)
+        raise ConfigError(
+            "Config is missing required keys:" + joined + "\nAdd them to the YAML file and retry startup."
+        )
+
+
+def _has_path(payload: dict[str, Any], path: tuple[str, ...]) -> bool:
+    current: Any = payload
+    for segment in path:
+        if not isinstance(current, dict) or segment not in current:
+            return False
+        current = current[segment]
+    return True
+
+
+def _validate_value_types(payload: dict[str, Any]) -> None:
+    _require_type(payload["app"]["window_width"], int, "app.window_width")
+    _require_type(payload["app"]["window_height"], int, "app.window_height")
+    _require_type(payload["app"]["target_fps"], int, "app.target_fps")
+    _require_type(payload["app"]["debug"], bool, "app.debug")
+    _require_type(payload["app"]["logging_level"], str, "app.logging_level")
+    _require_optional_type(payload["app"]["random_seed"], int, "app.random_seed")
+
+    _require_type(payload["camera"]["width"], int, "camera.width")
+    _require_type(payload["camera"]["height"], int, "camera.height")
+    _require_type(payload["camera"]["mirror"], bool, "camera.mirror")
+
+    _require_type(payload["pose"]["model_name"], str, "pose.model_name")
+    _require_numeric(payload["pose"]["confidence_threshold"], "pose.confidence_threshold")
+    _require_numeric(payload["pose"]["iou_threshold"], "pose.iou_threshold")
+    _require_type(payload["pose"]["device"], str, "pose.device")
+    _require_numeric(payload["pose"]["smoothing_factor"], "pose.smoothing_factor")
+    _require_numeric(
+        payload["pose"]["lost_person_timeout_seconds"],
+        "pose.lost_person_timeout_seconds",
+    )
+
+    _require_numeric(payload["liveview"]["left_panel_ratio"], "liveview.left_panel_ratio")
+    _require_numeric(payload["liveview"]["player_crop_margin"], "liveview.player_crop_margin")
+    _require_numeric(payload["liveview"]["crop_smoothing_factor"], "liveview.crop_smoothing_factor")
+    _require_numeric(payload["liveview"]["crop_max_jump_ratio"], "liveview.crop_max_jump_ratio")
+    _require_type(payload["liveview"]["circle_visuals"], dict, "liveview.circle_visuals")
+    _require_type(payload["liveview"]["debug"], dict, "liveview.debug")
+    _require_type(payload["liveview"]["debug"]["show_head_center"], bool, "liveview.debug.show_head_center")
+    _require_type(payload["liveview"]["debug"]["show_wrist_markers"], bool, "liveview.debug.show_wrist_markers")
+    _require_type(payload["liveview"]["circle_radius"], int, "liveview.circle_radius")
+    _require_type(payload["liveview"]["circle_offsets"], dict, "liveview.circle_offsets")
+    _require_type(payload["liveview"]["circle_stroke_width"], int, "liveview.circle_stroke_width")
+    _require_type(payload["liveview"]["label_font_size"], int, "liveview.label_font_size")
+    _require_type(payload["liveview"]["wrist_marker_radius"], int, "liveview.wrist_marker_radius")
+    _require_type(
+        payload["liveview"]["wrist_marker_outline_width"],
+        int,
+        "liveview.wrist_marker_outline_width",
+    )
+    _require_color_triplet(payload["liveview"]["padding_color"], "liveview.padding_color")
+    _validate_circle_visuals(payload["liveview"]["circle_visuals"])
+
+    _require_type(payload["gameplay"]["hit_window_ms"], int, "gameplay.hit_window_ms")
+    _require_type(
+        payload["gameplay"]["early_late_tolerance_ms"],
+        int,
+        "gameplay.early_late_tolerance_ms",
+    )
+    _require_type(payload["gameplay"]["debounce_ms"], int, "gameplay.debounce_ms")
+    _require_type(payload["gameplay"]["note_history_ms"], int, "gameplay.note_history_ms")
+    _require_type(payload["gameplay"]["lookahead_ms"], int, "gameplay.lookahead_ms")
+    _require_type(payload["gameplay"]["score_values"], dict, "gameplay.score_values")
+
+    _require_type(payload["midi"]["supported_extensions"], list, "midi.supported_extensions")
+    _require_type(payload["midi"]["note_mapping"], dict, "midi.note_mapping")
+    _require_type(payload["midi"]["track_filter"], list, "midi.track_filter")
+    _require_type(payload["midi"]["channel_filter"], list, "midi.channel_filter")
+    _require_type(
+        payload["midi"]["minimum_note_duration_ms"],
+        int,
+        "midi.minimum_note_duration_ms",
+    )
+    _require_type(payload["midi"]["ignore_meta_events"], bool, "midi.ignore_meta_events")
+
+    _require_type(payload["audio"]["mixer"], dict, "audio.mixer")
+    _require_type(payload["audio"]["gesture_sounds"], dict, "audio.gesture_sounds")
+    _require_type(payload["audio"]["volumes"], dict, "audio.volumes")
+    _require_type(payload["audio"]["playback"], dict, "audio.playback")
+    _require_type(payload["audio"]["mixer"]["max_channels"], int, "audio.mixer.max_channels")
+    _require_numeric(payload["audio"]["playback"]["note_duration_seconds"], "audio.playback.note_duration_seconds")
+    _require_numeric(payload["audio"]["playback"]["gesture_volume"], "audio.playback.gesture_volume")
+    _require_type(payload["audio"]["playback"]["max_concurrent_sounds"], int, "audio.playback.max_concurrent_sounds")
+    _require_type(payload["audio"]["playback"]["restart_busy_channel"], bool, "audio.playback.restart_busy_channel")
+    _validate_gesture_sounds(payload["audio"]["gesture_sounds"])
+
+    _require_type(payload["highscore"]["list_size"], int, "highscore.list_size")
+    _require_numeric(
+        payload["highscore"]["headshot_countdown_seconds"],
+        "highscore.headshot_countdown_seconds",
+    )
+    _require_numeric(
+        payload["highscore"]["headshot_crop_margin"],
+        "highscore.headshot_crop_margin",
+    )
+    _require_type(payload["highscore"]["thumbnail_width"], int, "highscore.thumbnail_width")
+    _require_type(payload["highscore"]["thumbnail_height"], int, "highscore.thumbnail_height")
+
+    circle_offsets = {
+        _normalize_mapping_key(key): value
+        for key, value in payload["liveview"]["circle_offsets"].items()
+    }
+    payload["liveview"]["circle_offsets"] = circle_offsets
+
+    if sorted(circle_offsets.keys()) != ["1", "2", "3", "4", "5"]:
+        raise ConfigError(
+            "liveview.circle_offsets must define exactly the string keys '1' through '5'."
+        )
+    for key, offset in circle_offsets.items():
+        _require_vector2(offset, f"liveview.circle_offsets.{key}")
+
+
+def _require_type(value: Any, expected_type: type, name: str) -> None:
+    if not isinstance(value, expected_type):
+        raise ConfigError(
+            f"Config key {name} must be of type {expected_type.__name__}, got {type(value).__name__}."
+        )
+
+
+def _require_optional_type(value: Any, expected_type: type, name: str) -> None:
+    if value is not None and not isinstance(value, expected_type):
+        raise ConfigError(
+            f"Config key {name} must be null or {expected_type.__name__}, got {type(value).__name__}."
+        )
+
+
+def _require_numeric(value: Any, name: str) -> None:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise ConfigError(f"Config key {name} must be numeric, got {type(value).__name__}.")
+
+
+def _require_vector2(value: Any, name: str) -> None:
+    if not isinstance(value, list) or len(value) != 2:
+        raise ConfigError(f"Config key {name} must be a 2-item list [x, y].")
+    for index, item in enumerate(value):
+        _require_numeric(item, f"{name}[{index}]")
+
+
+def _require_color_triplet(value: Any, name: str) -> None:
+    if not isinstance(value, list) or len(value) != 3:
+        raise ConfigError(f"Config key {name} must be an RGB triplet like [0, 0, 0].")
+    for index, item in enumerate(value):
+        _require_type(item, int, f"{name}[{index}]")
+        if not 0 <= item <= 255:
+            raise ConfigError(f"Config key {name}[{index}] must be between 0 and 255.")
+
+
+def _validate_circle_visuals(circle_visuals: dict[str, Any]) -> None:
+    state_names = ("idle", "active_contact", "hit_flash", "miss_flash")
+    for state_name in state_names:
+        if state_name not in circle_visuals:
+            raise ConfigError(
+                f"Config key liveview.circle_visuals must define state '{state_name}'."
+            )
+        state_payload = circle_visuals[state_name]
+        _require_type(state_payload, dict, f"liveview.circle_visuals.{state_name}")
+        _require_color_triplet(
+            state_payload["outline_color"],
+            f"liveview.circle_visuals.{state_name}.outline_color",
+        )
+        _require_color_triplet(
+            state_payload["fill_color"],
+            f"liveview.circle_visuals.{state_name}.fill_color",
+        )
+        _require_color_triplet(
+            state_payload["label_color"],
+            f"liveview.circle_visuals.{state_name}.label_color",
+        )
+
+    _require_type(
+        circle_visuals["hit_flash_duration_ms"],
+        int,
+        "liveview.circle_visuals.hit_flash_duration_ms",
+    )
+    _require_type(
+        circle_visuals["miss_flash_duration_ms"],
+        int,
+        "liveview.circle_visuals.miss_flash_duration_ms",
+    )
+
+
+def _validate_gesture_sounds(gesture_sounds: dict[str, Any]) -> None:
+    required_tokens = ("L1", "L2", "L3", "L4", "L5", "R1", "R2", "R3", "R4", "R5")
+    normalized = {_normalize_mapping_key(key): value for key, value in gesture_sounds.items()}
+    gesture_sounds.clear()
+    gesture_sounds.update(normalized)
+
+    if sorted(normalized.keys()) != sorted(required_tokens):
+        raise ConfigError(
+            "audio.gesture_sounds must define exactly the gesture tokens "
+            "L1, L2, L3, L4, L5, R1, R2, R3, R4, and R5."
+        )
+
+    for token in required_tokens:
+        spec = normalized[token]
+        _require_type(spec, dict, f"audio.gesture_sounds.{token}")
+        if "frequency_hz" not in spec:
+            raise ConfigError(
+                f"Config key audio.gesture_sounds.{token}.frequency_hz is required."
+            )
+        if "waveform" not in spec:
+            raise ConfigError(f"Config key audio.gesture_sounds.{token}.waveform is required.")
+        _require_numeric(spec["frequency_hz"], f"audio.gesture_sounds.{token}.frequency_hz")
+        _require_type(spec["waveform"], str, f"audio.gesture_sounds.{token}.waveform")
+
+
+def _load_simple_yaml(raw_text: str, config_path: Path) -> dict[str, Any]:
+    """Parse a minimal YAML subset when PyYAML is unavailable.
+
+    Supported features:
+    - nested mappings by indentation
+    - scalar values: strings, ints, floats, bools, null
+    - inline lists like [1, 2] or [".mid", ".midi"]
+    """
+    root: dict[str, Any] = {}
+    stack: list[tuple[int, dict[str, Any]]] = [(-1, root)]
+
+    for line_number, raw_line in enumerate(raw_text.splitlines(), start=1):
+        line = raw_line.split("#", 1)[0].rstrip()
+        if not line.strip():
+            continue
+
+        indent = len(line) - len(line.lstrip(" "))
+        if indent % 2 != 0:
+            raise ConfigError(
+                f"Failed to parse YAML config at {config_path}: line {line_number} uses unsupported indentation."
+            )
+
+        stripped = line.strip()
+        if stripped.startswith("- "):
+            raise ConfigError(
+                f"Failed to parse YAML config at {config_path}: block list syntax is unsupported by the built-in YAML fallback on line {line_number}."
+            )
+
+        key, sep, value = stripped.partition(":")
+        if not sep:
+            raise ConfigError(
+                f"Failed to parse YAML config at {config_path}: expected 'key: value' on line {line_number}."
+            )
+
+        while len(stack) > 1 and indent <= stack[-1][0]:
+            stack.pop()
+
+        current = stack[-1][1]
+        key = key.strip()
+        value = value.strip()
+        if not key:
+            raise ConfigError(
+                f"Failed to parse YAML config at {config_path}: empty key on line {line_number}."
+            )
+
+        if value == "":
+            child: dict[str, Any] = {}
+            current[key] = child
+            stack.append((indent, child))
+        else:
+            current[key] = _parse_scalar(value)
+
+    return root
+
+
+def _parse_scalar(value: str) -> Any:
+    lowered = value.lower()
+    if lowered == "true":
+        return True
+    if lowered == "false":
+        return False
+    if lowered in {"null", "none"}:
+        return None
+
+    if value.startswith("[") and value.endswith("]"):
+        inner = value[1:-1].strip()
+        if not inner:
+            return []
+        return [_parse_scalar(part.strip()) for part in inner.split(",")]
+
+    if (value.startswith('"') and value.endswith('"')) or (
+        value.startswith("'") and value.endswith("'")
+    ):
+        return ast.literal_eval(value)
+
+    try:
+        return int(value)
+    except ValueError:
+        pass
+
+    try:
+        return float(value)
+    except ValueError:
+        pass
+
+    return value
+
+
+def _normalize_mapping_key(key: Any) -> str:
+    text = str(key)
+    if (text.startswith('"') and text.endswith('"')) or (
+        text.startswith("'") and text.endswith("'")
+    ):
+        return text[1:-1]
+    return text

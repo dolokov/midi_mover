@@ -1,0 +1,145 @@
+app:
+  name: midi_mover
+  window_width: 1280
+  window_height: 720
+  target_fps: 60
+  debug: false
+  logging_level: INFO
+  random_seed: null
+
+camera:
+  width: 1280
+  height: 720
+  mirror: true
+
+pose:
+  model_name: yolo11n-pose.pt
+  confidence_threshold: 0.5
+  iou_threshold: 0.45
+  device: cpu
+  smoothing_factor: 0.35
+  lost_person_timeout_seconds: 1.0
+
+liveview:
+  left_panel_ratio: 0.6
+  player_crop_margin: 0.2
+  crop_smoothing_factor: 0.35
+  crop_max_jump_ratio: 0.18
+  circle_visuals:
+    idle:
+      outline_color: [96, 165, 250]
+      fill_color: [0, 0, 0]
+      label_color: [255, 255, 255]
+    active_contact:
+      outline_color: [250, 204, 21]
+      fill_color: [59, 130, 246]
+      label_color: [255, 255, 255]
+    hit_flash:
+      outline_color: [34, 197, 94]
+      fill_color: [22, 163, 74]
+      label_color: [255, 255, 255]
+    miss_flash:
+      outline_color: [248, 113, 113]
+      fill_color: [185, 28, 28]
+      label_color: [255, 255, 255]
+    hit_flash_duration_ms: 180
+    miss_flash_duration_ms: 220
+  debug:
+    show_head_center: false
+    show_wrist_markers: true
+  circle_radius: 42
+  circle_offsets:
+    "1": [-180, -10]
+    "2": [-90, -105]
+    "3": [0, -145]
+    "4": [90, -105]
+    "5": [180, -10]
+  circle_stroke_width: 4
+  label_font_size: 24
+  wrist_marker_radius: 10
+  wrist_marker_outline_width: 2
+  padding_color: [10, 18, 32]
+
+gameplay:
+  hit_window_ms: 120
+  early_late_tolerance_ms: 180
+  debounce_ms: 90
+  note_history_ms: 1500
+  lookahead_ms: 2500
+  score_values:
+    hit: 100
+    miss: -25
+    combo_bonus: 10
+
+midi:
+  supported_extensions: [".mid", ".midi"]
+  note_mapping:
+    "60": L1
+    "61": L2
+    "62": L3
+    "63": L4
+    "64": L5
+    "65": R1
+    "66": R2
+    "67": R3
+    "68": R4
+    "69": R5
+  track_filter: []
+  channel_filter: []
+  minimum_note_duration_ms: 40
+  ignore_meta_events: true
+
+audio:
+  mixer:
+    frequency: 44100
+    size: -16
+    channels: 2
+    buffer: 512
+    max_channels: 16
+  gesture_sounds:
+    L1:
+      frequency_hz: 261.63
+      waveform: sine
+    L2:
+      frequency_hz: 293.66
+      waveform: sine
+    L3:
+      frequency_hz: 329.63
+      waveform: sine
+    L4:
+      frequency_hz: 349.23
+      waveform: sine
+    L5:
+      frequency_hz: 392.0
+      waveform: sine
+    R1:
+      frequency_hz: 523.25
+      waveform: sine
+    R2:
+      frequency_hz: 587.33
+      waveform: sine
+    R3:
+      frequency_hz: 659.25
+      waveform: sine
+    R4:
+      frequency_hz: 698.46
+      waveform: sine
+    R5:
+      frequency_hz: 783.99
+      waveform: sine
+  volumes:
+    ui: 0.7
+    hit: 0.8
+    cue: 0.8
+  playback:
+    note_duration_seconds: 0.18
+    gesture_volume: 0.8
+    max_concurrent_sounds: 6
+    restart_busy_channel: true
+
+highscore:
+  list_size: 10
+  headshot_countdown_seconds: 3.0
+  headshot_crop_margin: 0.35
+  thumbnail_width: 160
+  thumbnail_height: 160

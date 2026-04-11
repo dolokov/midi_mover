@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>midi_mover Implementation TODO</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #111827;
+      --panel-2: #1f2937;
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+      --accent: #60a5fa;
+      --todo: #f59e0b;
+      --done: #10b981;
+      --border: #334155;
+      --code: #0b1220;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, Arial, Helvetica, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+    .wrap {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+    h1, h2, h3, h4 { margin-top: 0; }
+    h1 { font-size: 2rem; }
+    h2 { font-size: 1.5rem; margin-top: 24px; }
+    h3 { font-size: 1.15rem; margin-top: 20px; }
+    h4 { font-size: 1rem; margin-top: 16px; }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 18px 20px;
+      margin-bottom: 18px;
+    }
+    .subcard {
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px 16px;
+      margin-top: 12px;
+    }
+    .status {
+      display: inline-block;
+      min-width: 62px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-weight: 700;
+      font-size: 0.8rem;
+      letter-spacing: 0.03em;
+      text-align: center;
+      margin-left: 8px;
+    }
+    .todo { background: rgba(245, 158, 11, 0.18); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.45); }
+    .done { background: rgba(16, 185, 129, 0.18); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.45); }
+    ul, ol { margin-top: 8px; }
+    li { margin-bottom: 8px; }
+    code, pre {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      background: var(--code);
+      color: #dbeafe;
+      border-radius: 8px;
+    }
+    code { padding: 2px 6px; }
+    pre {
+      padding: 14px;
+      overflow: auto;
+      border: 1px solid var(--border);
+    }
+    .muted { color: var(--muted); }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 16px;
+    }
+    .small { font-size: 0.95rem; }
+    .rule {
+      height: 1px;
+      background: var(--border);
+      margin: 16px 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>midi_mover Implementation Backlog</h1>
+      <p>This document is the <strong>single source of implementation instructions</strong> for a later coding agent. It contains the required scope, architecture guidance, epics, tasks, subtasks, definitions of done, and workflow rules. Do not assume hidden requirements outside this page.</p>
+      <p class="muted small">All items start as <span class="status todo">TODO</span>. When a subtask is fully complete, change its label to <span class="status done">DONE</span>. If all subtasks in a task are done, set the task to DONE. If all tasks in an epic are done, set the epic to DONE.</p>
+    </div>
+
+    <div class="card">
+      <h2>Global product definition</h2>
+      <ul>
+        <li>Build a single-player rhythm game called <code>midi_mover</code>.</li>
+        <li>Use <strong>Ultralytics pose keypoints</strong> for <code>left_eye</code>, <code>right_eye</code>, <code>left_wrist</code>, and <code>right_wrist</code>. Do not build separate custom detectors for these body parts.</li>
+        <li>Head center is the midpoint between the two eye keypoints.</li>
+        <li>The gameplay screen is split into <strong>60% live camera view on the left</strong> and <strong>40% note timeline on the right</strong>.</li>
+        <li>The live camera view must crop around the player, stretch to full panel height while preserving aspect ratio, and pad left/right as needed to fill the panel width.</li>
+        <li>There are <strong>5 circles</strong> around the head. Their fixed semantic numbering is: <code>1 = far left</code>, <code>2 = upper-left</code>, <code>3 = above head</code>, <code>4 = upper-right</code>, <code>5 = far right</code>.</li>
+        <li>Gameplay notes are tokens <code>L1..L5</code> and <code>R1..R5</code>. <code>L</code> means left hand must enter the circle. <code>R</code> means right hand must enter the circle.</li>
+        <li>Target songs are loaded from a folder of MIDI files. On startup, choose a random MIDI. After each song, choose another random MIDI.</li>
+        <li>The right panel is a Guitar-Hero-like waterfall timeline with 5 vertical lanes. Notes move from top to bottom. The horizontal “now” line is fixed at <strong>25% of panel height from the top</strong>.</li>
+        <li>After notes are judged, they remain visible below the now line and are colored <strong>green on hit</strong> and <strong>red on miss</strong>.</li>
+        <li>Show the MIDI-derived song title before starting each song. The title is extracted from the MIDI filename, not from MIDI metadata.</li>
+        <li>At the end of every song, show result summary and the highscore board. If the result qualifies for a new highscore entry, show a countdown from <code>3</code> to <code>0</code>, take a new headshot, save it, and show the updated board.</li>
+        <li>The highscore board must always show score and <strong>percentage of notes hit</strong>, even when the just-finished run is not a new entry.</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h2>Mandatory workflow rules for the later agent</h2>
+      <ul>
+        <li><strong>Always fulfill each subtask completely</strong> before moving to the next one.</li>
+        <li>Use the conda environment <code>midi_mover</code>.</li>
+        <li><strong>After each completed subtask, the complete pipeline must run</strong>. “Complete pipeline” means the app must launch, load config, open the camera, initialize the window, load at least one MIDI file, render the liveview/timeline composition, and exit cleanly without regressions. Use a minimal smoke-test path if the full interactive flow is not practical in automated mode.</li>
+        <li>After fulfilling a subtask, update this <code>TODO.html</code> file immediately and set that subtask to DONE.</li>
+        <li>If all subtasks under a task are done, set the task to DONE.</li>
+        <li>If all tasks under an epic are done, set the epic to DONE.</li>
+        <li><strong>Do not use git.</strong> Do not create commits, branches, tags, or Git metadata.</li>
+        <li>Keep the project runnable from one explicit entry point, for example:<br /><code>python main.py --camera_id 0 --midi_dir ./midi --config ./config/default.yaml</code></li>
+        <li>Do not hardcode magic numbers in source files. All tuneable values must live in a YAML config file.</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h2>Configuration requirement: all hyperparameters must live in YAML</h2>
+      <p>Create a dedicated YAML configuration file, for example <code>config/default.yaml</code>, and load it at startup. The later agent may add more keys, but at minimum the YAML must own all tuneable values from the list below.</p>
+      <div class="grid">
+        <div class="subcard">
+          <h3>Application and runtime</h3>
+          <ul>
+            <li>window width, height, target FPS</li>
+            <li>debug flags</li>
+            <li>logging level</li>
+            <li>random seed behavior</li>
+          </ul>
+        </div>
+        <div class="subcard">
+          <h3>Camera and pose</h3>
+          <ul>
+            <li>camera width, height, mirror on/off</li>
+            <li>Ultralytics model path/name</li>
+            <li>pose confidence threshold</li>
+            <li>IOU threshold</li>
+            <li>device selection (CPU/GPU)</li>
+            <li>tracking smoothing factors</li>
+            <li>lost-person timeout and fallback behavior</li>
+          </ul>
+        </div>
+        <div class="subcard">
+          <h3>Liveview layout and circles</h3>
+          <ul>
+            <li>left/right panel ratio</li>
+            <li>crop margins around person</li>
+            <li>circle radius</li>
+            <li>circle offsets relative to head center</li>
+            <li>circle stroke width</li>
+            <li>label font sizes</li>
+            <li>padding color</li>
+          </ul>
+        </div>
+        <div class="subcard">
+          <h3>Gameplay and judgment</h3>
+          <ul>
+            <li>hit window in milliseconds</li>
+            <li>early/late tolerance</li>
+            <li>debounce timing for wrist-in-circle events</li>
+            <li>note history duration below the now line</li>
+            <li>lookahead duration above the now line</li>
+            <li>score values, combo bonuses, miss penalties</li>
+          </ul>
+        </div>
+        <div class="subcard">
+          <h3>MIDI and mapping</h3>
+          <ul>
+            <li>supported MIDI extensions</li>
+            <li>note-number to gesture-token mapping</li>
+            <li>track/channel filtering rules</li>
+            <li>minimum note duration thresholds</li>
+            <li>ignored meta events and unsupported-note policy</li>
+          </ul>
+        </div>
+        <div class="subcard">
+          <h3>Audio, summary, and highscore</h3>
+          <ul>
+            <li>pygame mixer settings</li>
+            <li>note sample paths or generated-tone parameters</li>
+            <li>volumes for cue, hit, and UI sounds</li>
+            <li>highscore list size</li>
+            <li>headshot countdown duration</li>
+            <li>headshot crop margins</li>
+            <li>thumbnail dimensions</li>
+          </ul>
+        </div>
+      </div>
+      <p class="small muted">Rule: if a later agent needs to tune something during implementation, that value must be moved into YAML instead of being left inline in code.</p>
+    </div>
+
+    <div class="card">
+      <h2>Recommended project structure</h2>
+      <pre>main.py
+config/
+  default.yaml
+src/midi_mover/
+  __init__.py
+  app.py
+  config.py
+  camera.py
+  pose.py
+  liveview.py
+  circles.py
+  audio.py
+  midi_loader.py
+  timeline.py
+  judge.py
+  screens.py
+  state_machine.py
+  highscore.py
+  assets.py
+assets/
+  audio/
+  fonts/
+  ui/
+data/
+  highscores/
+  headshots/</pre>
+      <p>The exact folder names may vary slightly, but the separation of concerns must remain clear.</p>
+    </div>
+
+    <div class="card">
+      <h2>Assumptions that the later agent must preserve</h2>
+      <ul>
+        <li>Single visible player only. If multiple people appear, pick one primary person consistently and ignore the others.</li>
+        <li>The camera ID and MIDI folder path are external inputs, not hardcoded.</li>
+        <li>MIDI parsing is done with <code>mido</code>.</li>
+        <li>Audio playback is done with <code>pygame</code>.</li>
+        <li>Runtime window rendering is done with <code>pygame</code>.</li>
+        <li>The live camera stream can be processed with OpenCV and then blitted into pygame surfaces.</li>
+        <li>All note-to-gesture mapping must be configurable in YAML. The implementation must not assume arbitrary MIDI files are naturally playable without mapping.</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h2>Epic 1: liveview with circles and keypoint detection and visualization and also music playing <span class="status todo">TODO</span></h2>
+      <p>Goal: create the real-time camera, pose, circle-overlay, and immediate audio foundation. This epic is complete when the player can see themselves, tracking is stable, the five circles behave correctly, and circle interactions can trigger audible notes with pygame.</p>
+
+      <div class="subcard">
+        <h3>Task 1.1 — Application skeleton, config loading, startup, and smoke-test path <span class="status done">DONE</span></h3>
+        <p><strong>Context:</strong> Every later task depends on a stable entry point, predictable configuration, and a repeatable smoke test.</p>
+        <p><strong>Requirements:</strong></p>
+        <ul>
+          <li>Create the application entry point and parse CLI inputs: camera ID, MIDI directory, config path.</li>
+          <li>Load YAML config early and fail fast with readable errors when required keys are missing.</li>
+          <li>Initialize pygame window and mixer, OpenCV camera, and pose model in a controlled startup sequence.</li>
+          <li>Expose a minimal smoke-test mode or code path that exercises startup without needing a full song playthrough.</li>
+        </ul>
+        <h4>Subtasks</h4>
+        <ol>
+          <li><strong>Subtask 1.1.1</strong> <span class="status done">DONE</span> — Create the project entry point, CLI arguments, and startup logging. The CLI must accept camera ID, MIDI folder, and YAML config path. Errors must be explicit and actionable.</li>
+          <li><strong>Subtask 1.1.2</strong> <span class="status done">DONE</span> — Implement YAML config loading and validation. Required keys must be checked at startup. Do not silently use hidden defaults for required gameplay parameters.</li>
+          <li><strong>Subtask 1.1.3</strong> <span class="status done">DONE</span> — Initialize pygame display and mixer, then OpenCV camera, then Ultralytics pose model. Handle startup failures cleanly and release resources on error.</li>
+          <li><strong>Subtask 1.1.4</strong> <span class="status done">DONE</span> — Add a smoke-test execution path that launches the window, loads config, touches all major subsystems, and exits cleanly. This is the required post-subtask regression check.</li>
+        </ol>
+        <p><strong>Definition of done:</strong> A single command can launch the app, all required systems initialize in a predictable order, and smoke tests can verify the stack after every later subtask.</p>
+      </div>
+
+      <div class="subcard">
+        <h3>Task 1.2 — Camera ingest, primary-person selection, and player-centered crop <span class="status todo">TODO</span></h3>
+        <p><strong>Context:</strong> The left panel must show a stable, person-centered live view. The game must not simply dump the raw camera feed.</p>
+        <p><strong>Requirements:</strong></p>
+        <ul>
+          <li>Open the camera selected by the input camera ID.</li>
+          <li>Process camera frames continuously and keep latency acceptable for gameplay.</li>
+          <li>Use pose results to determine the primary visible person.</li>
+          <li>Crop around the person, scale the crop to full left-panel height, preserve aspect ratio, and pad left/right to fill the 60% panel width.</li>
+          <li>Keep crop motion stable and readable. Avoid harsh jumps.</li>
+        </ul>
+        <h4>Subtasks</h4>
+        <ol>
+          <li><strong>Subtask 1.2.1</strong> <span class="status done">DONE</span> — Read frames from the selected camera, convert them into a format usable by both OpenCV processing and pygame rendering, and respect YAML-configured mirror behavior.</li>
+          <li><strong>Subtask 1.2.2</strong> <span class="status done">DONE</span> — Select a primary person from pose results. If multiple people are visible, choose one consistently using a stable rule such as largest confident detection or nearest to previous frame target.</li>
+          <li><strong>Subtask 1.2.3</strong> <span class="status done">DONE</span> — Implement person-centered crop extraction and scaling to full panel height while preserving aspect ratio.</li>
+          <li><strong>Subtask 1.2.4</strong> <span class="status done">DONE</span> — Implement left/right padding to fill the full 60% gameplay panel width and make the padding color configurable in YAML.</li>
+          <li><strong>Subtask 1.2.5</strong> <span class="status done">DONE</span> — Smooth crop movement enough to avoid jitter while keeping motion responsive for gameplay.</li>
+        </ol>
+        <p><strong>Definition of done:</strong> The left panel always shows a readable player-centered live view at full height with stable framing and correct panel fill behavior.</p>
+      </div>
+
+      <div class="subcard">
+        <h3>Task 1.3 — Pose keypoints, head center, circle geometry, and overlay rendering <span class="status todo">TODO</span></h3>
+        <p><strong>Context:</strong> The core of the interaction is visual clarity. The player must immediately understand where their hands are relative to the five circles.</p>
+        <p><strong>Requirements:</strong></p>
+        <ul>
+          <li>Read left eye, right eye, left wrist, and right wrist keypoints from the pose result.</li>
+          <li>Compute head center as the midpoint of the two eye points.</li>
+          <li>Compute the five circle centers relative to head center using YAML-defined offsets and sizes.</li>
+          <li>Use fixed circle numbering semantics: 1 far left, 2 upper-left, 3 above, 4 upper-right, 5 far right.</li>
+          <li>Render the five circles, circle numbers, wrist markers, optional head-center marker, and stateful highlighting.</li>
+        </ul>
+        <h4>Subtasks</h4>
+        <ol>
+          <li><strong>Subtask 1.3.1</strong> <span class="status done">DONE</span> — Extract the needed keypoints from Ultralytics results with confidence checks and fallback behavior when one or more points are temporarily missing.</li>
+          <li><strong>Subtask 1.3.2</strong> <span class="status done">DONE</span> — Compute head center from eye keypoints and expose it as a reusable gameplay coordinate.</li>
+          <li><strong>Subtask 1.3.3</strong> <span class="status done">DONE</span> — Implement configurable five-circle geometry anchored to head center. Circle numbering and relative placement must match the product definition exactly.</li>
+          <li><strong>Subtask 1.3.4</strong> <span class="status done">DONE</span> — Render circles and labels onto the liveview. At minimum, each circle must visibly show its lane number 1–5. If an additional helper legend is implemented, it must not reduce readability.</li>
+          <li><strong>Subtask 1.3.5</strong> <span class="status done">DONE</span> — Render left/right wrist markers and an optional head-center debug marker, controlled by YAML debug flags.</li>
+          <li><strong>Subtask 1.3.6</strong> <span class="status done">DONE</span> — Add visual states for idle, active contact, hit flash, and miss flash. All durations and colors must be YAML-tuneable.</li>
+        </ol>
+        <p><strong>Definition of done:</strong> The left panel clearly visualizes tracking state, circle positions, and moment-to-moment interaction feedback.</p>
+      </div>
+
+      <div class="subcard">
+        <h3>Task 1.4 — Hand-in-circle event detection and immediate note triggering <span class="status todo">TODO</span></h3>
+        <p><strong>Context:</strong> Before target-song gameplay exists, the app still needs a reliable local interaction signal: “left or right hand is inside circle N.” This becomes the basis for later judgment logic.</p>
+        <p><strong>Requirements:</strong></p>
+        <ul>
+          <li>Detect point-in-circle membership separately for left and right wrists.</li>
+          <li>Support stable enter/stay/exit state tracking instead of only per-frame raw overlap.</li>
+          <li>Trigger local musical feedback when a hand enters a circle or while it is held there, according to YAML-configured behavior.</li>
+          <li>Prevent rapid false retriggering caused by jitter using debounce or stateful gating.</li>
+        </ul>
+        <h4>Subtasks</h4>
+        <ol>
+          <li><strong>Subtask 1.4.1</strong> <span class="status done">DONE</span> — Implement left-hand and right-hand point-in-circle tests for all five circles and expose a structured interaction state model.</li>
+          <li><strong>Subtask 1.4.2</strong> <span class="status done">DONE</span> — Add per-hand, per-circle enter/stay/exit state transitions with timestamp tracking.</li>
+          <li><strong>Subtask 1.4.3</strong> <span class="status done">DONE</span> — Add debounce or hysteresis controls so tracking jitter does not create repeated false note triggers.</li>
+          <li><strong>Subtask 1.4.4</strong> <span class="status done">DONE</span> — Expose interaction state to overlay rendering so circles can brighten when the corresponding hand is inside them.</li>
+        </ol>
+        <p><strong>Definition of done:</strong> The game can robustly tell which hand is in which circle and when that state changed, with readable visual confirmation.</p>
+      </div>
+
+      <div class="subcard">
+        <h3>Task 1.5 — Pygame audio output for immediate player note feedback <span class="status todo">TODO</span></h3>
+        <p><strong>Context:</strong> Even before target-song scoring exists, entering circles must produce audible note feedback. This is the “music playing” requirement for Epic 1.</p>
+        <p><strong>Requirements:</strong></p>
+        <ul>
+          <li>Use pygame for audio playback.</li>
+          <li>Provide a configurable mapping from gesture tokens (<code>L1..R5</code>) to playable audio cues or note samples.</li>
+          <li>Support low-latency triggering from circle events.</li>
+          <li>Keep audio behavior configurable in YAML: sample paths or tone parameters, volume, retrigger policy, note length.</li>
+        </ul>
+        <h4>Subtasks</h4>
+        <ol>
+          <li><strong>Subtask 1.5.1</strong> <span class="status done">DONE</span> — Initialize pygame mixer using YAML-configured settings and verify audio device availability at startup.</li>
+          <li><strong>Subtask 1.5.2</strong> <span class="status done">DONE</span> — Implement a gesture-token-to-sound mapping for all ten gesture tokens <code>L1..L5</code> and <code>R1..R5</code>.</li>
+          <li><strong>Subtask 1.5.3</strong> <span class="status done">DONE</span> — Trigger sound playback from hand-in-circle events with stable timing and without runaway retriggering.</li>
+          <li><strong>Subtask 1.5.4</strong> <span class="status done">DONE</span> — Add YAML-tuneable note duration, volume, and concurrency limits, and verify that repeated gameplay interaction remains responsive.</li>
+        </ol>
+        <p><strong>Definition of done:</strong> The player can move left or right wrist into a circle and hear a predictable sound that matches the gesture token mapping.</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Epic 2: loading of target midi files and timeline <span class="status todo">TODO</span></h2>
+      <p>Goal: load playable MIDI songs from a folder, convert them into timed gameplay targets, render the right-side waterfall timeline, and judge hits/misses against player interaction.</p>
+
+      <div class="subcard">
+        <h3>Task 2.1 — MIDI folder discovery, validation, random selection, and title extraction <span class="status todo">TODO</span></h3>
+        <p><strong>Context:</strong> The runtime must treat the MIDI folder as content input and choose a random song at startup and between rounds.</p>
+        <p><strong>Requirements:</strong></p>
+        <ul>
+          <li>Scan the provided folder for supported MIDI files.</li>
+          <li>Fail cleanly if the folder is missing or contains no valid files.</li>
+          <li>Choose a random MIDI on startup and after each completed song.</li>
+          <li>Extract display title from filename in a readable way.</li>
+        </ul>
+        <h4>Subtasks</h4>
+        <ol>
+          <li><strong>Subtask 2.1.1</strong> <span class="status todo">TODO</span> — Implement folder scanning for <code>.mid</code> and <code>.midi</code> files, driven by YAML-supported extensions where appropriate.</li>
+          <li><strong>Subtask 2.1.2</strong> <span class="status todo">TODO</span> — Add validation and clear user-facing errors for missing folder, empty folder, unreadable file, or unsupported content.</li>
+          <li><strong>Subtask 2.1.3</strong> <span class="status todo">TODO</span> — Implement random file selection with deterministic behavior when a YAML seed is configured.</li>
+          <li><strong>Subtask 2.1.4</strong> <span class="status todo">TODO</span> — Extract a human-readable song title from the filename and show it in a pre-song title screen.</li>
+        </ol>
+        <p><strong>Definition of done:</strong> The app can reliably discover content, choose a song, and present a clean song title before gameplay begins.</p>
+      </div>
+
+      <div class="subcard">
+        <h3>Task 2.2 — MIDI parsing and conversion into gameplay targets <span class="status todo">TODO</span></h3>
+        <p><strong>Context:</strong> The game needs a precise timed sequence of tokens like <code>L3</code> or <code>R5</code>. MIDI is the input format, but gameplay tokens are the internal format.</p>
+        <p><strong>Requirements:</strong></p>
+        <ul>
+          <li>Use <code>mido</code> to parse MIDI files.</li>
+          <li>Convert delta times into absolute times in seconds or milliseconds.</li>
+          <li>Use YAML to map MIDI note numbers to gameplay gesture tokens <code>L1..L5</code> and <code>R1..R5</code>.</li>
+          <li>Ignore unsupported note numbers unless explicitly configured otherwise.</li>
+          <li>Produce a normalized internal target-note list with at least: token, lane, hand, timestamp, duration, source note number, and unique ID.</li>
+        </ul>
+        <p><strong>Important design decision:</strong> The later agent must not invent opaque auto-mapping rules at runtime. The playable mapping from MIDI note number to gesture token must be explicit and live in YAML. This keeps song behavior predictable and tuneable.</p>
+        <h4>Subtasks</h4>
+        <ol>
+          <li><strong>Subtask 2.2.1</strong> <span class="status todo">TODO</span> — Parse MIDI with mido and convert events into absolute time. Handle tempo changes correctly.</li>
+          <li><strong>Subtask 2.2.2</strong> <span class="status todo">TODO</span> — Filter to playable note events using YAML-configured track/channel/note rules.</li>
+          <li><strong>Subtask 2.2.3</strong> <span class="status todo">TODO</span> — Map playable MIDI note numbers into gameplay tokens <code>L1..L5</code> / <code>R1..R5</code> using a YAML mapping table.</li>
+          <li><strong>Subtask 2.2.4</strong> <span class="status todo">TODO</span> — Build the normalized target-note structure used by timeline rendering and hit judgment.</li>
+          <li><strong>Subtask 2.2.5</strong> <span class="status todo">TODO</span> — Add a debug print or on-screen inspection mode to verify parsed note timing and token conversion during development.</li>
+        </ol>
+        <p><strong>Definition of done:</strong> Any supported MIDI file can be transformed into a deterministic list of gameplay notes that later subsystems can consume.</p>
+      </div>
+
+      <div class="subcard">
+        <h3>Task 2.3 — Right-panel timeline layout and note-waterfall renderer <span class="status todo">TODO</span></h3>
+        <p><strong>Context:</strong> The right 40% of the screen is the gameplay reference. It must be readable, stable, and strictly aligned with the five circles.</p>
+        <p><strong>Requirements:</strong></p>
+        <ul>
+          <li>Render a right panel with exactly five vertical lanes.</li>
+          <li>Lane numbering must match circle numbering 1..5.</li>
+          <li>Notes move from top to bottom.</li>
+          <li>The “now” line is fixed at 25% of panel height from the top.</li>
+          <li>Each note must clearly indicate required hand <code>L</code> or <code>R</code>.</li>
+        </ul>
+        <h4>Subtasks</h4>
+        <ol>
+          <li><strong>Subtask 2.3.1</strong> <span class="status todo">TODO</span> — Implement the right-panel layout at a fixed 40% width with five equally readable lanes.</li>
+          <li><strong>Subtask 2.3.2</strong> <span class="status todo">TODO</span> — Render lane headers, lane separators, and a strong horizontal now line at 25% of panel height.</li>
+          <li><strong>Subtask 2.3.3</strong> <span class="status todo">TODO</span> — Render upcoming notes falling top-to-bottom based on the normalized target-note timing list.</li>
+          <li><strong>Subtask 2.3.4</strong> <span class="status todo">TODO</span> — Render each note with readable hand identity. Using <code>L</code> or <code>R</code> inside the note block is acceptable because the lane already represents the circle number.</li>
+          <li><strong>Subtask 2.3.5</strong> <span class="status todo">TODO</span> — Keep notes visible after judgment long enough to show green/red history below the now line, with duration controlled by YAML.</li>
+        </ol>
+        <p><strong>Definition of done:</strong> The timeline visually communicates upcoming notes, judgment timing, and recent history in a stable five-lane waterfall display.</p>
+      </div>
+
+      <div class="subcard">
+        <h3>Task 2.4 — Song-state timing, gameplay judgment, scoring, and on-screen feedback <span class="status todo">TODO</span></h3>
+        <p><strong>Context:</strong> The game becomes playable when real-time wrist-circle events are compared against the target-note timeline.</p>
+        <p><strong>Requirements:</strong></p>
+        <ul>
+          <li>Introduce a song clock that drives note positions and judgments.</li>
+          <li>Judge notes using the correct hand, correct lane, and a YAML-configured timing window.</li>
+          <li>Support hit, miss, early, and late outcome handling as needed for debugging.</li>
+          <li>Update score, combo, and hit percentage in real time.</li>
+          <li>Reflect judgment results on both the timeline and the liveview circle flashes.</li>
+        </ul>
+        <h4>Subtasks</h4>
+        <ol>
+          <li><strong>Subtask 2.4.1</strong> <span class="status todo">TODO</span> — Implement a song clock and pre-song lead-in so the first judged note does not appear immediately on screen.</li>
+          <li><strong>Subtask 2.4.2</strong> <span class="status todo">TODO</span> — Compare hand-in-circle interaction events against target notes using correct hand, correct lane, and hit window tolerance.</li>
+          <li><strong>Subtask 2.4.3</strong> <span class="status todo">TODO</span> — Mark notes as hit or miss, persist their judged state, and color timeline history green or red after the now line.</li>
+          <li><strong>Subtask 2.4.4</strong> <span class="status todo">TODO</span> — Compute score, combo, total hits, total misses, and percentage hit. All scoring constants must come from YAML.</li>
+          <li><strong>Subtask 2.4.5</strong> <span class="status todo">TODO</span> — Connect judgment events back to the liveview so circles flash green on hit and red on miss.</li>
+        </ol>
+        <p><strong>Definition of done:</strong> The application can run a full playable song, judge performance in real time, and produce stable gameplay metrics.</p>
+      </div>
+
+      <div class="subcard">
+        <h3>Task 2.5 — Screen flow for song title, gameplay, and song-complete summary <span class="status todo">TODO</span></h3>
+        <p><strong>Context:</strong> The player experience depends on clean state transitions. This task formalizes the basic round loop before highscores are added.</p>
+        <p><strong>Requirements:</strong></p>
+        <ul>
+          <li>Show a title screen before each song using the filename-derived title.</li>
+          <li>Transition from title screen to gameplay cleanly.</li>
+          <li>At song end, show a result summary containing at least score, notes hit, total notes, percentage hit, and max combo.</li>
+        </ul>
+        <h4>Subtasks</h4>
+        <ol>
+          <li><strong>Subtask 2.5.1</strong> <span class="status todo">TODO</span> — Implement a pre-song title screen with configurable duration.</li>
+          <li><strong>Subtask 2.5.2</strong> <span class="status todo">TODO</span> — Implement gameplay-state entry/exit transitions with clean timing handoff from title screen to active song.</li>
+          <li><strong>Subtask 2.5.3</strong> <span class="status todo">TODO</span> — Implement a song-complete summary screen that shows final run metrics and is ready to hand off to the highscore system.</li>
+        </ol>
+        <p><strong>Definition of done:</strong> The app can move from chosen song to title intro to gameplay to song summary without manual intervention.</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Epic 3: highscore system <span class="status todo">TODO</span></h2>
+      <p>Goal: persist top scores across runs, capture headshots for qualifying entries, and show the leaderboard after every song whether or not a new highscore was achieved.</p>
+
+      <div class="subcard">
+        <h3>Task 3.1 — Persistent highscore storage and data model <span class="status todo">TODO</span></h3>
+        <p><strong>Context:</strong> The leaderboard must survive application restarts and store enough information to render a meaningful board.</p>
+        <p><strong>Requirements:</strong></p>
+        <ul>
+          <li>Use a durable local storage mechanism, preferably SQLite.</li>
+          <li>Persist at least: score, percentage hit, song title, timestamp, headshot path, and any display name/initials if later added.</li>
+          <li>Keep storage paths under project-controlled data directories.</li>
+        </ul>
+        <h4>Subtasks</h4>
+        <ol>
+          <li><strong>Subtask 3.1.1</strong> <span class="status todo">TODO</span> — Create the persistent storage layer and initialize it at startup if it does not exist yet.</li>
+          <li><strong>Subtask 3.1.2</strong> <span class="status todo">TODO</span> — Define the highscore schema with fields for score, percentage hit, song title, timestamp, and headshot path.</li>
+          <li><strong>Subtask 3.1.3</strong> <span class="status todo">TODO</span> — Implement sorted retrieval of the top N entries, where N is controlled by YAML.</li>
+          <li><strong>Subtask 3.1.4</strong> <span class="status todo">TODO</span> — Ensure database and image paths are created automatically and survive app restarts.</li>
+        </ol>
+        <p><strong>Definition of done:</strong> The app can save and reload a persistent leaderboard between runs.</p>
+      </div>
+
+      <div class="subcard">
+        <h3>Task 3.2 — Highscore qualification logic and end-of-song decision flow <span class="status todo">TODO</span></h3>
+        <p><strong>Context:</strong> At the end of each song, the app must decide whether the new result enters the leaderboard and what screen comes next.</p>
+        <p><strong>Requirements:</strong></p>
+        <ul>
+          <li>Determine whether the just-finished run qualifies for the leaderboard.</li>
+          <li>Use a stable ranking rule. Default order should be higher score first. Tie-breakers should be deterministic.</li>
+          <li>Always preserve and display the just-finished run’s percentage hit, even if the run is not a leaderboard entry.</li>
+        </ul>
+        <h4>Subtasks</h4>
+        <ol>
+          <li><strong>Subtask 3.2.1</strong> <span class="status todo">TODO</span> — Implement ranking comparison against existing scores with a deterministic tie-break rule defined in code comments and reflected in behavior.</li>
+          <li><strong>Subtask 3.2.2</strong> <span class="status todo">TODO</span> — Decide at song end whether to go to headshot countdown or directly to the leaderboard screen.</li>
+          <li><strong>Subtask 3.2.3</strong> <span class="status todo">TODO</span> — Pass the final run summary forward so percentage hit and other metrics are always available to the leaderboard screen.</li>
+        </ol>
+        <p><strong>Definition of done:</strong> The app always knows whether a run is a new entry and always retains the finished run’s summary for display.</p>
+      </div>
+
+      <div class="subcard">
+        <h3>Task 3.3 — Headshot countdown, capture, crop, and save for new entries <span class="status todo">TODO</span></h3>
+        <p><strong>Context:</strong> A qualifying new leaderboard entry must trigger a visible headshot capture sequence, not an invisible snapshot.</p>
+        <p><strong>Requirements:</strong></p>
+        <ul>
+          <li>Show a countdown from <code>3</code> to <code>0</code> before taking the headshot.</li>
+          <li>Use the live camera feed the player is already seeing.</li>
+          <li>Capture a headshot crop centered on the player’s head with enough margin to include some shoulders.</li>
+          <li>Save the cropped image and associate its path with the leaderboard row.</li>
+        </ul>
+        <h4>Subtasks</h4>
+        <ol>
+          <li><strong>Subtask 3.3.1</strong> <span class="status todo">TODO</span> — Implement the new-highscore capture screen with a visible message and large countdown values 3, 2, 1, 0.</li>
+          <li><strong>Subtask 3.3.2</strong> <span class="status todo">TODO</span> — Capture a fresh frame at countdown completion and crop a headshot around the tracked head region using YAML-configured margins.</li>
+          <li><strong>Subtask 3.3.3</strong> <span class="status todo">TODO</span> — Save the headshot to the configured data directory and write its path into the persistent highscore record.</li>
+          <li><strong>Subtask 3.3.4</strong> <span class="status todo">TODO</span> — Handle failure cases safely. If a capture fails, the score must still be stored and the UI must degrade gracefully with a placeholder image or missing-image state.</li>
+        </ol>
+        <p><strong>Definition of done:</strong> Qualifying runs produce a visible countdown and a persisted portrait image linked to the saved leaderboard entry.</p>
+      </div>
+
+      <div class="subcard">
+        <h3>Task 3.4 — Highscore board rendering and post-song display flow <span class="status todo">TODO</span></h3>
+        <p><strong>Context:</strong> The highscore board is part of the standard end-of-song loop, not an optional side screen.</p>
+        <p><strong>Requirements:</strong></p>
+        <ul>
+          <li>After every song, show the highscore board.</li>
+          <li>If the current run is a new entry, highlight it.</li>
+          <li>If the current run is not a new entry, still show that run’s score and percentage hit somewhere on the board screen.</li>
+          <li>Each visible leaderboard row should include rank, headshot thumbnail if present, score, percentage hit, and song title.</li>
+        </ul>
+        <h4>Subtasks</h4>
+        <ol>
+          <li><strong>Subtask 3.4.1</strong> <span class="status todo">TODO</span> — Render the leaderboard screen with sorted rows and image thumbnails.</li>
+          <li><strong>Subtask 3.4.2</strong> <span class="status todo">TODO</span> — Add a clear visual highlight for the newly added entry when applicable.</li>
+          <li><strong>Subtask 3.4.3</strong> <span class="status todo">TODO</span> — Add a current-run summary strip for the non-qualifying case so percentage hit is still shown after every song.</li>
+          <li><strong>Subtask 3.4.4</strong> <span class="status todo">TODO</span> — Add a timed transition from leaderboard screen back to random next-song selection and the pre-song title screen.</li>
+        </ol>
+        <p><strong>Definition of done:</strong> The player always sees a post-song leaderboard screen, and it always communicates the just-finished run’s outcome.</p>
+      </div>
+
+      <div class="subcard">
+        <h3>Task 3.5 — End-to-end round loop and persistence verification <span class="status todo">TODO</span></h3>
+        <p><strong>Context:</strong> The final quality gate is a full round loop that starts from launch and ends back at the next song selection with persistent scores intact.</p>
+        <p><strong>Requirements:</strong></p>
+        <ul>
+          <li>Verify the complete round loop: startup → title → gameplay → summary → optional headshot → leaderboard → next song title.</li>
+          <li>Verify persistence across restarts.</li>
+          <li>Verify that the TODO page is updated as implementation progresses.</li>
+        </ul>
+        <h4>Subtasks</h4>
+        <ol>
+          <li><strong>Subtask 3.5.1</strong> <span class="status todo">TODO</span> — Run a full manual or scripted end-to-end flow for a non-qualifying score and verify correct screen transitions.</li>
+          <li><strong>Subtask 3.5.2</strong> <span class="status todo">TODO</span> — Run a full manual or scripted end-to-end flow for a qualifying score and verify countdown, headshot, save, and leaderboard highlight.</li>
+          <li><strong>Subtask 3.5.3</strong> <span class="status todo">TODO</span> — Restart the application and verify leaderboard persistence, image loading, and continued random song selection.</li>
+          <li><strong>Subtask 3.5.4</strong> <span class="status todo">TODO</span> — Review the TODO file and mark all fully completed subtasks, tasks, and epics as DONE.</li>
+        </ol>
+        <p><strong>Definition of done:</strong> The game’s main loop works across multiple rounds and persists highscores correctly between application runs.</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Completion policy</h2>
+      <ul>
+        <li>A subtask is DONE only when the code is implemented, the app still runs end-to-end, and the behavior matches this document.</li>
+        <li>A task is DONE only when every subtask under it is DONE and integrated into the running pipeline.</li>
+        <li>An epic is DONE only when all tasks under it are DONE and the feature area behaves coherently in the full app.</li>
+        <li>Never mark an item DONE based only on partial code, stubs, or untested assumptions.</li>
+      </ul>
+    </div>
+  </div>
+</body>
+</html>
