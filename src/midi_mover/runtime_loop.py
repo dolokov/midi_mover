@@ -101,7 +101,11 @@ def render_liveview_frame(
         selection=selection,
         config=config,
     )
-    gameplay_keypoints = gameplay_keypoint_tracker.extract(pose_result, selection)
+    gameplay_keypoints = gameplay_keypoint_tracker.extract(
+        pose_result,
+        selection,
+        hand_inference=hand_inference,
+    )
     circle_geometries = compute_circle_geometries(
         head_center_xy=getattr(gameplay_keypoints, "head_center_xy", None),
         gameplay_keypoints=gameplay_keypoints,

@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 import time
 from typing import Literal
 
 from midi_mover.circles import CircleGeometry
+from midi_mover.hand_keypoints import FingertipSample
 from midi_mover.pose import GameplayKeypoints, KeypointSample
 
 
@@ -339,17 +341,31 @@ def detect_hand_circle_interactions(
     now_monotonic: float | None = None,
     swap_hands: bool = False,
 ) -> InteractionStateSnapshot:
-    """Build a structured per-hand occupancy snapshot for all gameplay circles."""
+    """Build a structured per-hand occupancy snapshot for all gameplay circles.
+
+    Interaction registration is fingertip-driven (stage-2 hand model): a hand is
+    considered inside a lane if any confidence-gated fingertip assigned to that
+    hand is inside the circle for that lane.
+    """
 
     timestamp = now_monotonic
     if timestamp is None and gameplay_keypoints is not None:
         timestamp = gameplay_keypoints.captured_at_monotonic
     left_wrist = getattr(gameplay_keypoints, "left_wrist", None)
     right_wrist = getattr(gameplay_keypoints, "right_wrist", None)
+    fingertip_samples = tuple(getattr(gameplay_keypoints, "fingertip_samples", ()) or ())
+    fingertips_by_hand = _resolve_hand_fingertips(
+        fingertip_samples=fingertip_samples,
+        left_wrist=left_wrist,
+        right_wrist=right_wrist,
+    )
     if swap_hands:
-        left_wrist, right_wrist = right_wrist, left_wrist
-    left_hand = _build_hand_interaction_state("L", left_wrist, circle_geometries)
-    right_hand = _build_hand_interaction_state("R", right_wrist, circle_geometries)
+        fingertips_by_hand = {
+            "L": fingertips_by_hand["R"],
+            "R": fingertips_by_hand["L"],
+        }
+    left_hand = _build_hand_interaction_state("L", fingertips_by_hand["L"], circle_geometries)
+    right_hand = _build_hand_interaction_state("R", fingertips_by_hand["R"], circle_geometries)
     active_tokens = left_hand.active_tokens + right_hand.active_tokens
     return InteractionStateSnapshot(
         captured_at_monotonic=timestamp,
@@ -403,19 +419,93 @@ def describe_transition_snapshot(snapshot: InteractionTransitionSnapshot) -> str
 
 def _build_hand_interaction_state(
     hand: HandName,
-    wrist_sample: KeypointSample | None,
+    fingertip_points: tuple[tuple[float, float], ...],
     circle_geometries: tuple[CircleGeometry, ...],
 ) -> HandInteractionState:
-    wrist_xy = None if wrist_sample is None else wrist_sample.xy
+    wrist_xy = _compute_centroid_xy(fingertip_points)
     occupancies = tuple(
         HandCircleOccupancy(
             hand=hand,
             lane=circle.lane,
-            is_inside=wrist_xy is not None and point_in_circle(wrist_xy, circle),
+            is_inside=any(point_in_circle(point_xy, circle) for point_xy in fingertip_points),
         )
         for circle in circle_geometries
     )
     return HandInteractionState(hand=hand, wrist_xy=wrist_xy, occupancies=occupancies)
+
+
+def _resolve_hand_fingertips(
+    *,
+    fingertip_samples: tuple[FingertipSample, ...],
+    left_wrist: KeypointSample | None,
+    right_wrist: KeypointSample | None,
+) -> dict[HandName, tuple[tuple[float, float], ...]]:
+    grouped: dict[int, list[tuple[float, float]]] = {}
+    for sample in fingertip_samples:
+        grouped.setdefault(int(sample.hand_index), []).append((float(sample.xy[0]), float(sample.xy[1])))
+
+    if not grouped:
+        return {"L": (), "R": ()}
+
+    grouped_centroids: list[tuple[int, tuple[tuple[float, float], ...], tuple[float, float]]] = []
+    for hand_index, points in grouped.items():
+        normalized_points = tuple(points)
+        centroid = _compute_centroid_xy(normalized_points)
+        if centroid is None:
+            continue
+        grouped_centroids.append((hand_index, normalized_points, centroid))
+
+    if not grouped_centroids:
+        return {"L": (), "R": ()}
+
+    assigned: dict[HandName, list[tuple[float, float]]] = {"L": [], "R": []}
+    if left_wrist is not None and right_wrist is not None:
+        for _, points, centroid in grouped_centroids:
+            left_distance = math.dist(centroid, left_wrist.xy)
+            right_distance = math.dist(centroid, right_wrist.xy)
+            target = "L" if left_distance <= right_distance else "R"
+            assigned[target].extend(points)
+    elif left_wrist is not None:
+        for _, points, _ in grouped_centroids:
+            assigned["L"].extend(points)
+    elif right_wrist is not None:
+        for _, points, _ in grouped_centroids:
+            assigned["R"].extend(points)
+    else:
+        grouped_centroids.sort(key=lambda item: (item[2][0], item[0]))
+        if len(grouped_centroids) == 1:
+            assigned["L"].extend(grouped_centroids[0][1])
+        else:
+            left_anchor_x = grouped_centroids[0][2][0]
+            right_anchor_x = grouped_centroids[-1][2][0]
+            for _, points, centroid in grouped_centroids:
+                if centroid[0] <= left_anchor_x:
+                    assigned["L"].extend(points)
+                    continue
+                if centroid[0] >= right_anchor_x:
+                    assigned["R"].extend(points)
+                    continue
+                to_left = abs(centroid[0] - left_anchor_x)
+                to_right = abs(right_anchor_x - centroid[0])
+                target = "L" if to_left <= to_right else "R"
+                assigned[target].extend(points)
+
+    return {
+        "L": tuple(assigned["L"]),
+        "R": tuple(assigned["R"]),
+    }
+
+
+def _compute_centroid_xy(points: tuple[tuple[float, float], ...]) -> tuple[float, float] | None:
+    if not points:
+        return None
+    sum_x = 0.0
+    sum_y = 0.0
+    for x, y in points:
+        sum_x += float(x)
+        sum_y += float(y)
+    count = float(len(points))
+    return sum_x / count, sum_y / count
 
 
 def point_in_circle(point_xy: tuple[float, float], circle: CircleGeometry) -> bool:

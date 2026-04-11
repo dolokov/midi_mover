@@ -7,6 +7,8 @@ import math
 import time
 from typing import Any
 
+from midi_mover.hand_keypoints import FingertipSample, extract_fingertip_samples
+
 
 @dataclass(frozen=True)
 class PoseCandidate:
@@ -52,6 +54,7 @@ class GameplayKeypoints:
     right_eye: KeypointSample | None
     left_wrist: KeypointSample | None
     right_wrist: KeypointSample | None
+    fingertip_samples: tuple[FingertipSample, ...] = ()
 
     @property
     def all_visible(self) -> bool:
@@ -105,6 +108,7 @@ class HandRoiInference:
     hand_result: Any
     remapped_keypoints_xy: tuple[tuple[tuple[float, float], ...], ...]
     remapped_keypoints_conf: tuple[tuple[float, ...], ...]
+    fingertip_samples: tuple[FingertipSample, ...]
 
 
 COCO_KEYPOINT_INDICES: dict[str, int] = {
@@ -113,7 +117,6 @@ COCO_KEYPOINT_INDICES: dict[str, int] = {
     "left_wrist": 9,
     "right_wrist": 10,
 }
-
 
 def run_pose_inference(model: Any, frame_bgr: Any, *, conf: float, iou: float) -> Any:
     """Run one Ultralytics pose inference pass and return the first result object."""
@@ -169,6 +172,7 @@ def run_stage2_hand_inference_on_person_roi(
             hand_result=None,
             remapped_keypoints_xy=(),
             remapped_keypoints_conf=(),
+            fingertip_samples=(),
         )
 
     remapped_xy = _remap_keypoint_rows_to_full_frame(
@@ -179,12 +183,18 @@ def run_stage2_hand_inference_on_person_roi(
         tuple(float(value) for value in row)
         for row in _to_rows(getattr(getattr(hand_result, "keypoints", None), "conf", None))
     )
+    fingertip_samples = extract_fingertip_samples(
+        remapped_keypoints_xy=remapped_xy,
+        remapped_keypoints_conf=remapped_conf,
+        confidence_threshold=conf,
+    )
     return HandRoiInference(
         roi_xyxy=roi,
         roi_shape_hw=(y2 - y1, x2 - x1),
         hand_result=hand_result,
         remapped_keypoints_xy=remapped_xy,
         remapped_keypoints_conf=remapped_conf,
+        fingertip_samples=fingertip_samples,
     )
 
 
@@ -259,6 +269,7 @@ class GameplayKeypointTracker:
         self,
         result: Any,
         selection: PrimaryPersonSelection | None,
+        hand_inference: HandRoiInference | None = None,
         now_monotonic: float | None = None,
     ) -> GameplayKeypoints | None:
         if selection is None:
@@ -320,6 +331,9 @@ class GameplayKeypointTracker:
             right_eye=right_eye,
             left_wrist=resolved_samples.get("left_wrist"),
             right_wrist=resolved_samples.get("right_wrist"),
+            fingertip_samples=()
+            if hand_inference is None
+            else tuple(hand_inference.fingertip_samples),
         )
 
     def describe(self, keypoints: GameplayKeypoints | None) -> str:
@@ -340,6 +354,7 @@ class GameplayKeypointTracker:
             parts.append(
                 f"{name}=({sample.xy[0]:.1f},{sample.xy[1]:.1f}) conf={sample.confidence:.2f} src={sample.source} age={age_seconds:.3f}s"
             )
+        parts.append(f"fingertips={len(keypoints.fingertip_samples)}")
         return " ".join(parts)
 
 

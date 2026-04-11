@@ -21,6 +21,7 @@ from midi_mover.interaction_visuals import (
     CircleVisualStateTracker,
     HandCircleTransitionTracker,
 )
+from midi_mover.integration_checks import verify_fingertip_audio_integration
 from midi_mover.liveview import CropSmoother
 from midi_mover.logging_utils import configure_logging
 from midi_mover.pose import (
@@ -419,6 +420,8 @@ def run_smoke_test(
     pygame = resources.pygame_module
     pygame.event.pump()
     _render_liveview_preview(resources, config)
+    verify_fingertip_audio_integration()
+    LOGGER.info("Verified fingertip-driven interaction transitions and downstream audio hook integration.")
 
     LOGGER.info(
         "Smoke test touched subsystems successfully: window=%s mixer=%s frame_reader=%s pose_model=%s midi_files=%s.",
