@@ -102,13 +102,15 @@
       <h2>Global product definition</h2>
       <ul>
         <li>Build a single-player rhythm game called <code>midi_mover</code>.</li>
-        <li>Use <strong>Ultralytics pose keypoints</strong> for <code>left_eye</code>, <code>right_eye</code>, <code>left_wrist</code>, and <code>right_wrist</code>. Do not build separate custom detectors for these body parts.</li>
+        <li>Use a <strong>two-stage Ultralytics pipeline</strong>: stage 1 body/pose detection for person + eye anchors, and stage 2 hand-keypoint detection on a person-ROI crop. Do not build separate custom detectors outside Ultralytics models.</li>
         <li>Head center is the midpoint between the two eye keypoints.</li>
+        <li>Gameplay interaction events must be driven by <strong>fingertips from the hand-keypoint model</strong>, not by wrist keypoints from the body model.</li>
         <li>The gameplay screen is split into <strong>60% live camera view on the left</strong> and <strong>40% note timeline on the right</strong>.</li>
         <li>The live camera view must crop around the player, stretch to full panel height while preserving aspect ratio, and pad left/right as needed to fill the panel width.</li>
         <li>There are <strong>5 circles</strong> around the head. Their fixed semantic numbering is: <code>1 = far left</code>, <code>2 = upper-left</code>, <code>3 = above head</code>, <code>4 = upper-right</code>, <code>5 = far right</code>.</li>
         <li>Gameplay notes are tokens <code>L1..L5</code> and <code>R1..R5</code>. <code>L</code> means left hand must enter the circle. <code>R</code> means right hand must enter the circle.</li>
         <li>Target songs are loaded from a folder of MIDI files. On startup, choose a random MIDI. After each song, choose another random MIDI.</li>
+        <li>Audio quality is a first-class gameplay requirement: target-song playback should support expressive, high-quality instrument timbres (not only basic beeps/sine cues).</li>
         <li>The right panel is a Guitar-Hero-like waterfall timeline with 5 vertical lanes. Notes move from top to bottom. The horizontal “now” line is fixed at <strong>25% of panel height from the top</strong>.</li>
         <li>After notes are judged, they remain visible below the now line and are colored <strong>green on hit</strong> and <strong>red on miss</strong>.</li>
         <li>Show the MIDI-derived song title before starting each song. The title is extracted from the MIDI filename, not from MIDI metadata.</li>
@@ -149,10 +151,12 @@
           <h3>Camera and pose</h3>
           <ul>
             <li>camera width, height, mirror on/off</li>
-            <li>Ultralytics model path/name</li>
+            <li>Ultralytics stage-1 model path/name</li>
+            <li>Ultralytics stage-2 hand-keypoint model path/name</li>
             <li>pose confidence threshold</li>
             <li>IOU threshold</li>
             <li>device selection (CPU/GPU)</li>
+            <li>stage-2 ROI expansion in pixels around detected person bbox (default 30px each side)</li>
             <li>tracking smoothing factors</li>
             <li>lost-person timeout and fallback behavior</li>
           </ul>
@@ -174,10 +178,12 @@
           <ul>
             <li>hit window in milliseconds</li>
             <li>early/late tolerance</li>
-            <li>debounce timing for wrist-in-circle events</li>
+            <li>debounce timing for fingertip-in-circle events</li>
+            <li>fingertip trigger policy (which fingertips can trigger, per-hand/per-finger options)</li>
             <li>note history duration below the now line</li>
             <li>lookahead duration above the now line</li>
             <li>score values, combo bonuses, miss penalties</li>
+            <li>debug overlays for full keypoint rendering from stage-1 and stage-2 models</li>
           </ul>
         </div>
         <div class="subcard">
@@ -185,6 +191,8 @@
           <ul>
             <li>supported MIDI extensions</li>
             <li>note-number to gesture-token mapping</li>
+            <li>optional dynamic/adaptive note-to-circle mapping mode</li>
+            <li>rolling note-history buffer size for adaptive mapping (for example last 30 notes)</li>
             <li>track/channel filtering rules</li>
             <li>minimum note duration thresholds</li>
             <li>ignored meta events and unsupported-note policy</li>
@@ -193,9 +201,13 @@
         <div class="subcard">
           <h3>Audio, summary, and highscore</h3>
           <ul>
-            <li>pygame mixer settings</li>
-            <li>note sample paths or generated-tone parameters</li>
-            <li>volumes for cue, hit, and UI sounds</li>
+            <li>audio backend selection (<code>pygame</code> or <code>pyfluidsynth</code>)</li>
+            <li>backend-specific low-latency settings (buffer, sample rate, channels)</li>
+            <li>SoundFont (<code>.sf2</code>) path and loading policy for FluidSynth</li>
+            <li>MIDI channel/program handling and optional instrument override profiles</li>
+            <li>FluidSynth mix controls: gain, polyphony, reverb, chorus</li>
+            <li>volumes for cue, hit, and UI sounds; plus target-song playback gain</li>
+            <li>fallback audio behavior when preferred backend is unavailable</li>
             <li>highscore list size</li>
             <li>headshot countdown duration</li>
             <li>headshot crop margins</li>
@@ -243,7 +255,7 @@ data/
         <li>Single visible player only. If multiple people appear, pick one primary person consistently and ignore the others.</li>
         <li>The camera ID and MIDI folder path are external inputs, not hardcoded.</li>
         <li>MIDI parsing is done with <code>mido</code>.</li>
-        <li>Audio playback is done with <code>pygame</code>.</li>
+        <li>Audio playback uses a pluggable backend. Preferred target-song renderer is <code>pyfluidsynth</code> (SoundFont-based), with <code>pygame</code> retained as a compatibility fallback.</li>
         <li>Runtime window rendering is done with <code>pygame</code>.</li>
         <li>The live camera stream can be processed with OpenCV and then blitted into pygame surfaces.</li>
         <li>All note-to-gesture mapping must be configurable in YAML. The implementation must not assume arbitrary MIDI files are naturally playable without mapping.</li>
@@ -362,14 +374,52 @@ data/
           <li><strong>Subtask 1.5.2</strong> <span class="status done">DONE</span> — Implement a gesture-token-to-sound mapping for all ten gesture tokens <code>L1..L5</code> and <code>R1..R5</code>.</li>
           <li><strong>Subtask 1.5.3</strong> <span class="status done">DONE</span> — Trigger sound playback from hand-in-circle events with stable timing and without runaway retriggering.</li>
           <li><strong>Subtask 1.5.4</strong> <span class="status done">DONE</span> — Add YAML-tuneable note duration, volume, and concurrency limits, and verify that repeated gameplay interaction remains responsive.</li>
-        </ol>
-        <h4>Follow-up subtasks requested after initial completion</h4>
-        <ol>
           <li><strong>Subtask 1.5.5</strong> <span class="status done">DONE</span> — Add sustained hand-in-circle playback so a gesture sound starts on enter and continues while the hand remains inside the circle instead of only firing once.</li>
-          <li><strong>Subtask 1.5.6</strong> <span class="status todo">TODO</span> — Track active playback channels per gesture token and stop or fade them out cleanly on exit transitions without runaway overlaps.</li>
-          <li><strong>Subtask 1.5.7</strong> <span class="status todo">TODO</span> — Move sustained playback policy into YAML, including loop/hold enablement and release fade timing, and verify the full runtime remains responsive.</li>
+          
         </ol>
         <p><strong>Definition of done:</strong> The player can move left or right wrist into a circle and hear a predictable sound that matches the gesture token mapping.</p>
+      </div>
+
+      <div class="subcard">
+        <h3>Task 1.6 — Two-stage detection pipeline and fingertip-driven interaction events <span class="status todo">TODO</span></h3>
+        <p><strong>Context:</strong> Existing interaction is wrist-driven from the body model. New behavior requires stage-1 person/pose detection followed by stage-2 hand-keypoint detection, with gameplay input sourced from fingertips only.</p>
+        <p><strong>Requirements:</strong></p>
+        <ul>
+          <li>Add support for a second Ultralytics hand-keypoint model path as runtime input.</li>
+          <li>Run stage 1 first to detect/select primary person, then expand the person bounding box by 30px in all directions (YAML-tuneable) for stage-2 hand inference.</li>
+          <li>Clamp expanded ROI to frame bounds and remap stage-2 keypoints back to full-frame/liveview coordinates.</li>
+          <li>Use hand-model fingertips as the only event-registration source for circle interactions.</li>
+          <li>Document and implement fingertip index mapping used by the chosen Ultralytics hand-keypoint convention.</li>
+        </ul>
+        <h4>Subtasks</h4>
+        <ol>
+          <li><strong>Subtask 1.6.1</strong> <span class="status todo">TODO</span> — Extend CLI/config inputs to accept both stage-1 pose model path and stage-2 hand model path, with clear startup validation and errors.</li>
+          <li><strong>Subtask 1.6.2</strong> <span class="status todo">TODO</span> — Implement the two-stage inference flow: detect person in stage 1, expand bbox, run stage-2 hand keypoints on the ROI.</li>
+          <li><strong>Subtask 1.6.3</strong> <span class="status todo">TODO</span> — Add YAML parameters for ROI expansion (default 30px), stage-2 thresholds, and fallback behavior when stage-2 results are missing.</li>
+          <li><strong>Subtask 1.6.4</strong> <span class="status todo">TODO</span> — Integrate fingertip keypoint extraction (thumb/index/middle/ring/pinky tips) with explicit index documentation and confidence gating.</li>
+          <li><strong>Subtask 1.6.5</strong> <span class="status todo">TODO</span> — Replace wrist-based point-in-circle event registration with fingertip-based registration while preserving robust enter/stay/exit semantics and debounce controls.</li>
+          <li><strong>Subtask 1.6.6</strong> <span class="status todo">TODO</span> — Verify downstream gameplay/audio hooks consume fingertip events correctly without regressions in runtime stability.</li>
+        </ol>
+        <p><strong>Definition of done:</strong> The runtime uses a stable two-stage model pipeline and registers circle interactions from hand-model fingertips only.</p>
+      </div>
+
+      <div class="subcard">
+        <h3>Task 1.7 — Optional liveview rendering of all keypoints from both models <span class="status todo">TODO</span></h3>
+        <p><strong>Context:</strong> Debugging and tuning require visibility into every keypoint emitted by stage-1 and stage-2 models.</p>
+        <p><strong>Requirements:</strong></p>
+        <ul>
+          <li>Add YAML-configurable toggles for full keypoint rendering from both models.</li>
+          <li>Render both keypoint sets in liveview with distinct styling so they are easy to differentiate.</li>
+          <li>Keep overlays readable alongside circles, labels, and gameplay flashes.</li>
+        </ul>
+        <h4>Subtasks</h4>
+        <ol>
+          <li><strong>Subtask 1.7.1</strong> <span class="status todo">TODO</span> — Add debug flags and styling parameters for stage-1 full-keypoint overlays.</li>
+          <li><strong>Subtask 1.7.2</strong> <span class="status todo">TODO</span> — Add debug flags and styling parameters for stage-2 hand-keypoint overlays, including fingertip emphasis options.</li>
+          <li><strong>Subtask 1.7.3</strong> <span class="status todo">TODO</span> — Implement draw routines for both full keypoint sets in the liveview transform pipeline.</li>
+          <li><strong>Subtask 1.7.4</strong> <span class="status todo">TODO</span> — Add optional on-screen legend/debug text indicating active keypoint overlay modes and detection confidence visibility.</li>
+        </ol>
+        <p><strong>Definition of done:</strong> Developers can toggle complete stage-1 and stage-2 keypoint overlays in liveview without breaking gameplay readability.</p>
       </div>
     </div>
 
@@ -408,7 +458,7 @@ data/
           <li>Ignore unsupported note numbers unless explicitly configured otherwise.</li>
           <li>Produce a normalized internal target-note list with at least: token, lane, hand, timestamp, duration, source note number, and unique ID.</li>
         </ul>
-        <p><strong>Important design decision:</strong> The later agent must not invent opaque auto-mapping rules at runtime. The playable mapping from MIDI note number to gesture token must be explicit and live in YAML. This keeps song behavior predictable and tuneable.</p>
+        <p><strong>Important design decision:</strong> The baseline playable mapping from MIDI note number to gesture token must remain explicit and YAML-driven. In addition, an optional adaptive mapping mode may remap notes over time using deterministic rules and YAML-defined parameters.</p>
         <h4>Subtasks</h4>
         <ol>
           <li><strong>Subtask 2.2.1</strong> <span class="status todo">TODO</span> — Parse MIDI with mido and convert events into absolute time. Handle tempo changes correctly.</li>
@@ -416,6 +466,14 @@ data/
           <li><strong>Subtask 2.2.3</strong> <span class="status todo">TODO</span> — Map playable MIDI note numbers into gameplay tokens <code>L1..L5</code> / <code>R1..R5</code> using a YAML mapping table.</li>
           <li><strong>Subtask 2.2.4</strong> <span class="status todo">TODO</span> — Build the normalized target-note structure used by timeline rendering and hit judgment.</li>
           <li><strong>Subtask 2.2.5</strong> <span class="status todo">TODO</span> — Add a debug print or on-screen inspection mode to verify parsed note timing and token conversion during development.</li>
+        </ol>
+        <h4>Follow-up subtasks requested after initial completion</h4>
+        <ol>
+          <li><strong>Subtask 2.2.6</strong> <span class="status todo">TODO</span> — Add optional adaptive mapping for songs containing more than ten relevant MIDI notes, allowing multiple source notes to map onto the same gesture circles over time.</li>
+          <li><strong>Subtask 2.2.7</strong> <span class="status todo">TODO</span> — Implement a rolling recent-note buffer (default 30 notes, YAML-configurable) as context for adaptive mapping decisions.</li>
+          <li><strong>Subtask 2.2.8</strong> <span class="status todo">TODO</span> — Implement a deterministic “low notes to low circles” ranking policy based on the rolling buffer so lower recent notes trend toward lower-index circles and higher notes toward higher-index circles.</li>
+          <li><strong>Subtask 2.2.9</strong> <span class="status todo">TODO</span> — Add a YAML-configurable creative/adaptive mode variant that introduces musically interesting remap behavior while staying deterministic under fixed seed.</li>
+          <li><strong>Subtask 2.2.10</strong> <span class="status todo">TODO</span> — Add mapping-state debug/introspection output showing rolling buffer contents and current note-to-circle assignment over time.</li>
         </ol>
         <p><strong>Definition of done:</strong> Any supported MIDI file can be transformed into a deterministic list of gameplay notes that later subsystems can consume.</p>
       </div>
@@ -480,6 +538,32 @@ data/
           <li><strong>Subtask 2.5.3</strong> <span class="status todo">TODO</span> — Implement a song-complete summary screen that shows final run metrics and is ready to hand off to the highscore system.</li>
         </ol>
         <p><strong>Definition of done:</strong> The app can move from chosen song to title intro to gameplay to song summary without manual intervention.</p>
+      </div>
+
+      <div class="subcard">
+        <h3>Task 2.6 — High-quality MIDI audio with pyfluidsynth backend and instrument control <span class="status todo">TODO</span></h3>
+        <p><strong>Context:</strong> Current audio is functionally correct but not musically pleasing enough. The project now prioritizes richer timbre and instrument variety for target-song playback.</p>
+        <p><strong>Requirements:</strong></p>
+        <ul>
+          <li>Introduce a backend abstraction so audio output can switch between <code>pygame</code> and <code>pyfluidsynth</code> via YAML.</li>
+          <li>Implement SoundFont-based synthesis using <code>pyfluidsynth</code> for expressive instrument playback.</li>
+          <li>Support instrument changes (MIDI program changes and/or YAML instrument profiles).</li>
+          <li>Expose FluidSynth quality controls in YAML (gain, polyphony, reverb, chorus, sample rate, buffer size).</li>
+          <li>Keep timeline/song-clock synchronization stable when using the synth backend.</li>
+          <li>Provide robust startup diagnostics and fallback behavior when FluidSynth is unavailable.</li>
+        </ul>
+        <h4>Subtasks</h4>
+        <ol>
+          <li><strong>Subtask 2.6.1</strong> <span class="status todo">TODO</span> — Add an audio backend interface and route target-song playback through it, selectable by <code>audio.backend</code> in YAML.</li>
+          <li><strong>Subtask 2.6.2</strong> <span class="status todo">TODO</span> — Implement a <code>pyfluidsynth</code> backend that initializes the synth, loads a configured <code>.sf2</code>, and reports actionable errors if setup fails.</li>
+          <li><strong>Subtask 2.6.3</strong> <span class="status todo">TODO</span> — Add YAML config keys for FluidSynth core settings: sample rate, gain, polyphony, audio driver/buffer options.</li>
+          <li><strong>Subtask 2.6.4</strong> <span class="status todo">TODO</span> — Implement MIDI program/bank handling and optional YAML instrument-profile overrides for more musical presets.</li>
+          <li><strong>Subtask 2.6.5</strong> <span class="status todo">TODO</span> — Add YAML controls for reverb/chorus and verify subjective sound improvements across at least two different instrument profiles.</li>
+          <li><strong>Subtask 2.6.6</strong> <span class="status todo">TODO</span> — Ensure note on/off scheduling remains tightly aligned with gameplay timing and timeline visualization.</li>
+          <li><strong>Subtask 2.6.7</strong> <span class="status todo">TODO</span> — Keep immediate interaction cues functional (hit/miss/UI), either via backend routing or a mixed strategy, without noticeable latency regressions.</li>
+          <li><strong>Subtask 2.6.8</strong> <span class="status todo">TODO</span> — Implement graceful fallback to pygame backend when FluidSynth dependencies or SoundFont assets are missing, with clear runtime logging.</li>
+        </ol>
+        <p><strong>Definition of done:</strong> Target-song playback can use SoundFont synthesis with clearly better timbre, configurable instrument variety, and stable synchronization with gameplay.</p>
       </div>
     </div>
 
