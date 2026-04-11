@@ -33,9 +33,15 @@ REQUIRED_PATHS: tuple[tuple[str, ...], ...] = (
     ("camera", "width"),
     ("camera", "height"),
     ("camera", "mirror"),
-    ("pose", "model_name"),
+    ("pose", "stage1_model_name"),
+    ("pose", "stage2_hand_model_name"),
+    ("pose", "stage2_roi_expansion_px"),
     ("pose", "confidence_threshold"),
     ("pose", "iou_threshold"),
+    ("pose", "stage2_confidence_threshold"),
+    ("pose", "stage2_iou_threshold"),
+    ("pose", "stage2_missing_fallback_mode"),
+    ("pose", "stage2_missing_fallback_timeout_seconds"),
     ("pose", "device"),
     ("pose", "smoothing_factor"),
     ("pose", "lost_person_timeout_seconds"),
@@ -168,15 +174,42 @@ def _validate_value_types(payload: dict[str, Any]) -> None:
     _require_type(payload["camera"]["height"], int, "camera.height")
     _require_type(payload["camera"]["mirror"], bool, "camera.mirror")
 
-    _require_type(payload["pose"]["model_name"], str, "pose.model_name")
+    _require_non_empty_string(
+        payload["pose"]["stage1_model_name"],
+        "pose.stage1_model_name",
+    )
+    _require_non_empty_string(
+        payload["pose"]["stage2_hand_model_name"],
+        "pose.stage2_hand_model_name",
+    )
+    _require_type(payload["pose"]["stage2_roi_expansion_px"], int, "pose.stage2_roi_expansion_px")
     _require_numeric(payload["pose"]["confidence_threshold"], "pose.confidence_threshold")
     _require_numeric(payload["pose"]["iou_threshold"], "pose.iou_threshold")
+    _require_numeric(
+        payload["pose"]["stage2_confidence_threshold"],
+        "pose.stage2_confidence_threshold",
+    )
+    _require_numeric(payload["pose"]["stage2_iou_threshold"], "pose.stage2_iou_threshold")
+    _require_non_empty_string(
+        payload["pose"]["stage2_missing_fallback_mode"],
+        "pose.stage2_missing_fallback_mode",
+    )
+    _require_numeric(
+        payload["pose"]["stage2_missing_fallback_timeout_seconds"],
+        "pose.stage2_missing_fallback_timeout_seconds",
+    )
     _require_type(payload["pose"]["device"], str, "pose.device")
     _require_numeric(payload["pose"]["smoothing_factor"], "pose.smoothing_factor")
     _require_numeric(
         payload["pose"]["lost_person_timeout_seconds"],
         "pose.lost_person_timeout_seconds",
     )
+    fallback_mode = str(payload["pose"]["stage2_missing_fallback_mode"]).strip().lower()
+    if fallback_mode not in {"clear", "reuse_last"}:
+        raise ConfigError(
+            "Config key pose.stage2_missing_fallback_mode must be either 'clear' or 'reuse_last'."
+        )
+    payload["pose"]["stage2_missing_fallback_mode"] = fallback_mode
 
     _require_numeric(payload["liveview"]["left_panel_ratio"], "liveview.left_panel_ratio")
     _require_numeric(payload["liveview"]["crop_smoothing_factor"], "liveview.crop_smoothing_factor")
@@ -276,6 +309,12 @@ def _require_type(value: Any, expected_type: type, name: str) -> None:
         raise ConfigError(
             f"Config key {name} must be of type {expected_type.__name__}, got {type(value).__name__}."
         )
+
+
+def _require_non_empty_string(value: Any, name: str) -> None:
+    _require_type(value, str, name)
+    if not value.strip():
+        raise ConfigError(f"Config key {name} must be a non-empty string.")
 
 
 def _require_optional_type(value: Any, expected_type: type, name: str) -> None:

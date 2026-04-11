@@ -44,6 +44,7 @@ class StartupResources:
     camera: Any | None = None
     frame_reader: CameraFrameReader | None = None
     pose_model: Any | None = None
+    hand_pose_model: Any | None = None
     primary_person_tracker: PrimaryPersonTracker | None = None
     gameplay_keypoint_tracker: GameplayKeypointTracker | None = None
     interaction_transition_tracker: HandCircleTransitionTracker | None = None
@@ -106,7 +107,18 @@ def initialize_runtime(options: StartupOptions, config: AppConfig) -> StartupRes
         resources.pygame_module = _initialize_pygame_display(config, resources)
         _initialize_pygame_mixer(config, resources)
         resources.camera = _initialize_camera(options, config)
-        resources.pose_model = _initialize_pose_model(config)
+        stage1_model_name, stage2_model_name = _resolve_model_names(options, config)
+        device = str(config.raw["pose"]["device"])
+        resources.pose_model = _initialize_ultralytics_model(
+            model_name=stage1_model_name,
+            device=device,
+            model_role="stage-1 pose",
+        )
+        resources.hand_pose_model = _initialize_ultralytics_model(
+            model_name=stage2_model_name,
+            device=device,
+            model_role="stage-2 hand",
+        )
     except StartupError:
         resources.cleanup()
         raise
@@ -216,7 +228,23 @@ def _initialize_primary_person_tracker(config: AppConfig) -> PrimaryPersonTracke
     return tracker
 
 
-def _initialize_pose_model(config: AppConfig) -> Any:
+def _resolve_model_names(options: StartupOptions, config: AppConfig) -> tuple[str, str]:
+    stage1_model_name = options.stage1_pose_model or str(config.raw["pose"]["stage1_model_name"])
+    stage2_model_name = options.stage2_hand_model or str(config.raw["pose"]["stage2_hand_model_name"])
+
+    if not stage1_model_name.strip():
+        raise StartupError(
+            "Stage-1 pose model is empty. Pass --stage1-pose-model or set pose.stage1_model_name in YAML."
+        )
+    if not stage2_model_name.strip():
+        raise StartupError(
+            "Stage-2 hand model is empty. Pass --stage2-hand-model or set pose.stage2_hand_model_name in YAML."
+        )
+
+    return stage1_model_name.strip(), stage2_model_name.strip()
+
+
+def _initialize_ultralytics_model(*, model_name: str, device: str, model_role: str) -> Any:
     try:
         from ultralytics import YOLO
     except ModuleNotFoundError as exc:
@@ -225,18 +253,21 @@ def _initialize_pose_model(config: AppConfig) -> Any:
             "Activate conda env 'midi_mover' and install ultralytics."
         ) from exc
 
-    model_name = str(config.raw["pose"]["model_name"])
-    device = str(config.raw["pose"]["device"])
     try:
         model = YOLO(model_name)
         if hasattr(model, "to"):
             model.to(device)
     except Exception as exc:
         raise StartupError(
-            f"Failed to initialize Ultralytics pose model '{model_name}' on device '{device}': {exc}"
+            f"Failed to initialize Ultralytics {model_role} model '{model_name}' on device '{device}': {exc}"
         ) from exc
 
-    LOGGER.info("Initialized Ultralytics pose model '%s' on device '%s'.", model_name, device)
+    LOGGER.info(
+        "Initialized Ultralytics %s model '%s' on device '%s'.",
+        model_role,
+        model_name,
+        device,
+    )
     return model
 
 
@@ -319,6 +350,8 @@ def _render_liveview_preview(resources: StartupResources, config: AppConfig) -> 
         raise StartupError("Liveview preview failed: camera frame reader was not initialized.")
     if resources.pose_model is None:
         raise StartupError("Liveview preview failed: pose model was not initialized.")
+    if resources.hand_pose_model is None:
+        raise StartupError("Liveview preview failed: hand pose model was not initialized.")
     if resources.primary_person_tracker is None:
         raise StartupError("Liveview preview failed: primary person tracker was not initialized.")
     if resources.gameplay_keypoint_tracker is None:
@@ -336,6 +369,7 @@ def _render_liveview_preview(resources: StartupResources, config: AppConfig) -> 
             pygame_module=resources.pygame_module,
             frame_reader=resources.frame_reader,
             pose_model=resources.pose_model,
+            hand_pose_model=resources.hand_pose_model,
             primary_person_tracker=resources.primary_person_tracker,
             gameplay_keypoint_tracker=resources.gameplay_keypoint_tracker,
             interaction_transition_tracker=resources.interaction_transition_tracker,
@@ -363,6 +397,8 @@ def run_smoke_test(
         raise StartupError("Smoke test failed: camera was not initialized.")
     if resources.pose_model is None:
         raise StartupError("Smoke test failed: pose model was not initialized.")
+    if resources.hand_pose_model is None:
+        raise StartupError("Smoke test failed: hand pose model was not initialized.")
     if resources.pygame_module is None or not resources.mixer_initialized:
         raise StartupError("Smoke test failed: pygame mixer was not initialized.")
     if resources.gesture_sounds is None:
@@ -406,6 +442,7 @@ def run_interactive_runtime(
     required = {
         "window": resources.window,
         "pose_model": resources.pose_model,
+        "hand_pose_model": resources.hand_pose_model,
         "pygame_module": resources.pygame_module,
         "frame_reader": resources.frame_reader,
         "primary_person_tracker": resources.primary_person_tracker,
@@ -424,6 +461,7 @@ def run_interactive_runtime(
             pygame_module=resources.pygame_module,
             frame_reader=resources.frame_reader,
             pose_model=resources.pose_model,
+            hand_pose_model=resources.hand_pose_model,
             primary_person_tracker=resources.primary_person_tracker,
             gameplay_keypoint_tracker=resources.gameplay_keypoint_tracker,
             interaction_transition_tracker=resources.interaction_transition_tracker,
@@ -442,6 +480,8 @@ def _log_startup(options: StartupOptions) -> None:
     LOGGER.info("camera_id=%s", options.camera_id)
     LOGGER.info("midi_dir=%s", options.midi_dir)
     LOGGER.info("config_path=%s", options.config_path)
+    LOGGER.info("stage1_pose_model_override=%s", options.stage1_pose_model or "<config>")
+    LOGGER.info("stage2_hand_model_override=%s", options.stage2_hand_model or "<config>")
     LOGGER.info("smoke_test=%s", options.smoke_test)
 
 
@@ -452,7 +492,11 @@ def _log_config_summary(config: AppConfig) -> None:
         raw["app"]["window_width"],
         raw["app"]["window_height"],
         raw["app"]["target_fps"],
-        raw["pose"]["model_name"],
+        raw["pose"]["stage1_model_name"],
+    )
+    LOGGER.info(
+        "Configured stage-2 hand model=%s",
+        raw["pose"]["stage2_hand_model_name"],
     )
     LOGGER.info(
         "Liveview ratio=%s circle_radius_percent=%s supported_midi_extensions=%s",

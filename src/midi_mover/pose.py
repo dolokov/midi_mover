@@ -96,6 +96,17 @@ class PoseProcessingError(RuntimeError):
     """Raised when pose results cannot be interpreted safely."""
 
 
+@dataclass(frozen=True)
+class HandRoiInference:
+    """Stage-2 hand-model inference output mapped back to full-frame coordinates."""
+
+    roi_xyxy: tuple[int, int, int, int]
+    roi_shape_hw: tuple[int, int]
+    hand_result: Any
+    remapped_keypoints_xy: tuple[tuple[tuple[float, float], ...], ...]
+    remapped_keypoints_conf: tuple[tuple[float, ...], ...]
+
+
 COCO_KEYPOINT_INDICES: dict[str, int] = {
     "left_eye": 1,
     "right_eye": 2,
@@ -115,6 +126,66 @@ def run_pose_inference(model: Any, frame_bgr: Any, *, conf: float, iou: float) -
     if not results:
         return None
     return results[0]
+
+
+def run_stage2_hand_inference_on_person_roi(
+    *,
+    hand_model: Any,
+    frame_bgr: Any,
+    selection: PrimaryPersonSelection | None,
+    expansion_px: int,
+    conf: float,
+    iou: float,
+) -> HandRoiInference | None:
+    """Run stage-2 hand inference on an expanded stage-1 selected person ROI."""
+
+    if selection is None:
+        return None
+
+    frame_height = int(getattr(frame_bgr, "shape", [0, 0])[0])
+    frame_width = int(getattr(frame_bgr, "shape", [0, 0])[1])
+    if frame_width <= 0 or frame_height <= 0:
+        return None
+
+    roi = _compute_expanded_roi(
+        bbox_xyxy=selection.candidate.bbox_xyxy,
+        expansion_px=int(expansion_px),
+        frame_width=frame_width,
+        frame_height=frame_height,
+    )
+    x1, y1, x2, y2 = roi
+    if x2 <= x1 or y2 <= y1:
+        return None
+
+    roi_frame_bgr = frame_bgr[y1:y2, x1:x2]
+    if roi_frame_bgr is None or int(getattr(roi_frame_bgr, "size", 0)) <= 0:
+        return None
+
+    hand_result = run_pose_inference(hand_model, roi_frame_bgr, conf=conf, iou=iou)
+    if hand_result is None:
+        return HandRoiInference(
+            roi_xyxy=roi,
+            roi_shape_hw=(y2 - y1, x2 - x1),
+            hand_result=None,
+            remapped_keypoints_xy=(),
+            remapped_keypoints_conf=(),
+        )
+
+    remapped_xy = _remap_keypoint_rows_to_full_frame(
+        xy_rows=_to_rows(getattr(getattr(hand_result, "keypoints", None), "xy", None)),
+        offset_xy=(x1, y1),
+    )
+    remapped_conf = tuple(
+        tuple(float(value) for value in row)
+        for row in _to_rows(getattr(getattr(hand_result, "keypoints", None), "conf", None))
+    )
+    return HandRoiInference(
+        roi_xyxy=roi,
+        roi_shape_hw=(y2 - y1, x2 - x1),
+        hand_result=hand_result,
+        remapped_keypoints_xy=remapped_xy,
+        remapped_keypoints_conf=remapped_conf,
+    )
 
 
 def extract_pose_candidates(result: Any, confidence_threshold: float) -> list[PoseCandidate]:
@@ -368,6 +439,39 @@ def _extract_keypoint_rows(result: Any) -> tuple[list[list[Any]], list[list[Any]
     xy_rows = _to_rows(getattr(keypoints, "xy", None))
     conf_rows = _to_rows(getattr(keypoints, "conf", None))
     return xy_rows, conf_rows
+
+
+def _compute_expanded_roi(
+    *,
+    bbox_xyxy: tuple[float, float, float, float],
+    expansion_px: int,
+    frame_width: int,
+    frame_height: int,
+) -> tuple[int, int, int, int]:
+    x1, y1, x2, y2 = bbox_xyxy
+    expand = max(0, int(expansion_px))
+    roi_x1 = max(0, int(math.floor(x1)) - expand)
+    roi_y1 = max(0, int(math.floor(y1)) - expand)
+    roi_x2 = min(frame_width, int(math.ceil(x2)) + expand)
+    roi_y2 = min(frame_height, int(math.ceil(y2)) + expand)
+    return roi_x1, roi_y1, roi_x2, roi_y2
+
+
+def _remap_keypoint_rows_to_full_frame(
+    *,
+    xy_rows: list[list[Any]],
+    offset_xy: tuple[int, int],
+) -> tuple[tuple[tuple[float, float], ...], ...]:
+    offset_x, offset_y = float(offset_xy[0]), float(offset_xy[1])
+    remapped: list[tuple[tuple[float, float], ...]] = []
+    for row in xy_rows:
+        points: list[tuple[float, float]] = []
+        for point in row:
+            if not isinstance(point, (list, tuple)) or len(point) < 2:
+                continue
+            points.append((float(point[0]) + offset_x, float(point[1]) + offset_y))
+        remapped.append(tuple(points))
+    return tuple(remapped)
 
 
 def _extract_keypoint_sample(

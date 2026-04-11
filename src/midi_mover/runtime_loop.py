@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from midi_mover.audio import GesturePlaybackController, LoadedGestureSounds
@@ -24,13 +25,17 @@ from midi_mover.liveview import (
 )
 from midi_mover.pose import (
     GameplayKeypointTracker,
+    HandRoiInference,
     PoseProcessingError,
     PrimaryPersonSelection,
     PrimaryPersonTracker,
     run_pose_inference,
+    run_stage2_hand_inference_on_person_roi,
 )
 
 LOGGER = logging.getLogger("midi_mover")
+_LAST_STAGE2_HAND_INFERENCE: HandRoiInference | None = None
+_LAST_STAGE2_HAND_INFERENCE_AT: float | None = None
 
 
 class LiveviewRuntimeError(RuntimeError):
@@ -55,6 +60,7 @@ def render_liveview_frame(
     pygame_module: Any,
     frame_reader: CameraFrameReader,
     pose_model: Any,
+    hand_pose_model: Any,
     primary_person_tracker: PrimaryPersonTracker,
     gameplay_keypoint_tracker: GameplayKeypointTracker,
     interaction_transition_tracker: HandCircleTransitionTracker,
@@ -89,6 +95,12 @@ def render_liveview_frame(
         raise LiveviewRuntimeError(f"Liveview rendering failed during pose inference: {exc}") from exc
 
     selection = primary_person_tracker.select(pose_result)
+    hand_inference = _run_hand_roi_inference(
+        hand_pose_model=hand_pose_model,
+        frame=frame,
+        selection=selection,
+        config=config,
+    )
     gameplay_keypoints = gameplay_keypoint_tracker.extract(pose_result, selection)
     circle_geometries = compute_circle_geometries(
         head_center_xy=getattr(gameplay_keypoints, "head_center_xy", None),
@@ -192,6 +204,7 @@ def render_liveview_frame(
         selection=selection,
         gameplay_keypoint_tracker=gameplay_keypoint_tracker,
         gameplay_keypoints=gameplay_keypoints,
+        hand_inference=hand_inference,
         transition_snapshot=transition_snapshot,
     )
 
@@ -202,6 +215,7 @@ def run_persistent_liveview_loop(
     pygame_module: Any,
     frame_reader: CameraFrameReader,
     pose_model: Any,
+    hand_pose_model: Any,
     primary_person_tracker: PrimaryPersonTracker,
     gameplay_keypoint_tracker: GameplayKeypointTracker,
     interaction_transition_tracker: HandCircleTransitionTracker,
@@ -237,6 +251,7 @@ def run_persistent_liveview_loop(
             pygame_module=pygame_module,
             frame_reader=frame_reader,
             pose_model=pose_model,
+            hand_pose_model=hand_pose_model,
             primary_person_tracker=primary_person_tracker,
             gameplay_keypoint_tracker=gameplay_keypoint_tracker,
             interaction_transition_tracker=interaction_transition_tracker,
@@ -249,6 +264,56 @@ def run_persistent_liveview_loop(
         clock.tick(target_fps)
 
 
+def _run_hand_roi_inference(
+    *,
+    hand_pose_model: Any,
+    frame: Any,
+    selection: PrimaryPersonSelection | None,
+    config: Any,
+) -> HandRoiInference | None:
+    global _LAST_STAGE2_HAND_INFERENCE, _LAST_STAGE2_HAND_INFERENCE_AT
+
+    pose_config = config.raw.get("pose", {})
+    expansion_px = int(pose_config.get("stage2_roi_expansion_px", 30))
+    stage2_conf = float(pose_config.get("stage2_confidence_threshold", pose_config["confidence_threshold"]))
+    stage2_iou = float(pose_config.get("stage2_iou_threshold", pose_config["iou_threshold"]))
+    fallback_mode = str(pose_config.get("stage2_missing_fallback_mode", "clear")).strip().lower()
+    fallback_timeout_seconds = max(
+        0.0,
+        float(pose_config.get("stage2_missing_fallback_timeout_seconds", 0.0)),
+    )
+
+    inference = run_stage2_hand_inference_on_person_roi(
+        hand_model=hand_pose_model,
+        frame_bgr=frame.bgr_frame,
+        selection=selection,
+        expansion_px=expansion_px,
+        conf=stage2_conf,
+        iou=stage2_iou,
+    )
+
+    has_stage2_keypoints = (
+        inference is not None
+        and len(inference.remapped_keypoints_xy) > 0
+    )
+    now = time.monotonic()
+
+    if has_stage2_keypoints:
+        _LAST_STAGE2_HAND_INFERENCE = inference
+        _LAST_STAGE2_HAND_INFERENCE_AT = now
+        return inference
+
+    if (
+        fallback_mode == "reuse_last"
+        and _LAST_STAGE2_HAND_INFERENCE is not None
+        and _LAST_STAGE2_HAND_INFERENCE_AT is not None
+        and (now - _LAST_STAGE2_HAND_INFERENCE_AT) <= fallback_timeout_seconds
+    ):
+        return _LAST_STAGE2_HAND_INFERENCE
+
+    return inference
+
+
 def _log_frame_summary(
     *,
     frame: Any,
@@ -258,10 +323,19 @@ def _log_frame_summary(
     selection: PrimaryPersonSelection | None,
     gameplay_keypoint_tracker: GameplayKeypointTracker,
     gameplay_keypoints: Any,
+    hand_inference: HandRoiInference | None,
     transition_snapshot: Any,
 ) -> None:
+    hand_roi_summary = "none"
+    if hand_inference is not None:
+        x1, y1, x2, y2 = hand_inference.roi_xyxy
+        hand_roi_summary = (
+            f"roi=({x1},{y1},{x2},{y2}) "
+            f"hands={len(hand_inference.remapped_keypoints_xy)}"
+        )
+
     LOGGER.info(
-        "Prepared person-centered liveview crop: frame=%sx%s crop=(x=%s y=%s w=%s h=%s) scaled=%sx%s visible_width=%s blit=(%s,%s) source_offset_x=%s mirrored=%s left_panel=%sx%s primary_person=%s keypoints=%s transitions=%s.",
+        "Prepared person-centered liveview crop: frame=%sx%s crop=(x=%s y=%s w=%s h=%s) scaled=%sx%s visible_width=%s blit=(%s,%s) source_offset_x=%s mirrored=%s left_panel=%sx%s primary_person=%s keypoints=%s stage2_hand=%s transitions=%s.",
         frame.width,
         frame.height,
         layout.crop.x,
@@ -279,6 +353,7 @@ def _log_frame_summary(
         left_panel_height,
         _format_primary_person_log(selection),
         gameplay_keypoint_tracker.describe(gameplay_keypoints),
+        hand_roi_summary,
         describe_transition_snapshot(transition_snapshot),
     )
 

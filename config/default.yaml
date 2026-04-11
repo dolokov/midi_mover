@@ -13,9 +13,15 @@ camera:
   mirror: true
 
 pose:
-  model_name: yolo11n-pose.pt
+  stage1_model_name: yolo11n-pose.pt
+  stage2_hand_model_name: yolo11n-pose.pt
+  stage2_roi_expansion_px: 30
   confidence_threshold: 0.5
   iou_threshold: 0.45
+  stage2_confidence_threshold: 0.5
+  stage2_iou_threshold: 0.45
+  stage2_missing_fallback_mode: reuse_last
+  stage2_missing_fallback_timeout_seconds: 0.25
   device: cpu
   smoothing_factor: 0.35
   lost_person_timeout_seconds: 1.0

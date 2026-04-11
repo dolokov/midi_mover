@@ -12,6 +12,8 @@ class StartupOptions:
     camera_id: int
     midi_dir: Path
     config_path: Path
+    stage1_pose_model: str | None
+    stage2_hand_model: str | None
     log_level: str
     smoke_test: bool
 
@@ -41,6 +43,24 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("config/default.yaml"),
         help="Path to the YAML configuration file. Default: ./config/default.yaml",
+    )
+    parser.add_argument(
+        "--stage1-pose-model",
+        type=str,
+        default=None,
+        help=(
+            "Optional override for the stage-1 Ultralytics pose model path/name. "
+            "If omitted, the value from YAML config pose.stage1_model_name is used."
+        ),
+    )
+    parser.add_argument(
+        "--stage2-hand-model",
+        type=str,
+        default=None,
+        help=(
+            "Optional override for the stage-2 Ultralytics hand-keypoint model path/name. "
+            "If omitted, the value from YAML config pose.stage2_hand_model_name is used."
+        ),
     )
     parser.add_argument(
         "--log-level",
@@ -92,10 +112,26 @@ def parse_args(argv: list[str] | None = None) -> StartupOptions:
     if not config_path.is_file():
         parser.error(f"--config must point to a file, but got: {config_path}.")
 
+    stage1_pose_model = namespace.stage1_pose_model
+    if stage1_pose_model is not None and not stage1_pose_model.strip():
+        parser.error(
+            "--stage1-pose-model cannot be empty. Provide a valid model path/name "
+            "or omit the flag to use pose.stage1_model_name from YAML."
+        )
+
+    stage2_hand_model = namespace.stage2_hand_model
+    if stage2_hand_model is not None and not stage2_hand_model.strip():
+        parser.error(
+            "--stage2-hand-model cannot be empty. Provide a valid model path/name "
+            "or omit the flag to use pose.stage2_hand_model_name from YAML."
+        )
+
     return StartupOptions(
         camera_id=camera_id,
         midi_dir=midi_dir,
         config_path=config_path,
+        stage1_pose_model=stage1_pose_model.strip() if stage1_pose_model is not None else None,
+        stage2_hand_model=stage2_hand_model.strip() if stage2_hand_model is not None else None,
         log_level=namespace.log_level,
         smoke_test=bool(namespace.smoke_test),
     )
