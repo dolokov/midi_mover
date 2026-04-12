@@ -6,6 +6,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from midi_mover.interaction_visuals import CircleVisualState, CircleVisualStyle
+from midi_mover.keypoint_overlay import (
+    draw_stage1_full_keypoints,
+    draw_stage2_full_keypoints,
+)
 from midi_mover.pose import GameplayKeypoints, PrimaryPersonSelection
 
 
@@ -293,6 +297,17 @@ def draw_liveview_overlay(
     show_wrist_markers: bool = True,
     wrist_marker_radius: int = 10,
     wrist_marker_outline_width: int = 2,
+    show_stage1_full_keypoints: bool = False,
+    stage1_keypoints_xy: tuple[tuple[float, float], ...] = (),
+    stage1_keypoints_conf: tuple[float, ...] = (),
+    stage1_full_keypoints_style: dict[str, Any] | None = None,
+    show_stage2_hand_keypoints: bool = False,
+    stage2_hand_keypoints_xy: tuple[tuple[tuple[float, float], ...], ...] = (),
+    stage2_hand_keypoints_conf: tuple[tuple[float, ...], ...] = (),
+    stage2_hand_keypoints_style: dict[str, Any] | None = None,
+    show_keypoint_overlay_legend: bool = False,
+    show_overlay_confidence_values: bool = True,
+    keypoint_overlay_legend_style: dict[str, Any] | None = None,
 ) -> None:
     """Draw the tracked person box, head center, circles, and lane labels on a liveview surface."""
 
@@ -331,6 +346,30 @@ def draw_liveview_overlay(
             scale_y=scale_y,
             wrist_marker_radius=wrist_marker_radius,
             wrist_marker_outline_width=wrist_marker_outline_width,
+        )
+
+    if show_stage1_full_keypoints and stage1_keypoints_xy:
+        draw_stage1_full_keypoints(
+            surface,
+            pygame_module,
+            keypoints_xy=stage1_keypoints_xy,
+            keypoints_conf=stage1_keypoints_conf,
+            crop_origin=crop_origin,
+            scale_x=scale_x,
+            scale_y=scale_y,
+            style=stage1_full_keypoints_style,
+        )
+
+    if show_stage2_hand_keypoints and stage2_hand_keypoints_xy:
+        draw_stage2_full_keypoints(
+            surface,
+            pygame_module,
+            hand_keypoints_xy=stage2_hand_keypoints_xy,
+            hand_keypoints_conf=stage2_hand_keypoints_conf,
+            crop_origin=crop_origin,
+            scale_x=scale_x,
+            scale_y=scale_y,
+            style=stage2_hand_keypoints_style,
         )
 
     if not circle_geometries:
@@ -376,6 +415,18 @@ def draw_liveview_overlay(
             center_xy=(circle_x, circle_y),
             circle_radius=circle_radius,
             label_color=style.label_color,
+        )
+
+    if show_keypoint_overlay_legend:
+        _draw_keypoint_overlay_legend(
+            surface,
+            pygame_module,
+            show_stage1_full_keypoints=show_stage1_full_keypoints,
+            show_stage2_hand_keypoints=show_stage2_hand_keypoints,
+            stage1_keypoints_conf=stage1_keypoints_conf,
+            stage2_hand_keypoints_conf=stage2_hand_keypoints_conf,
+            show_overlay_confidence_values=show_overlay_confidence_values,
+            style=keypoint_overlay_legend_style,
         )
 
 
@@ -438,6 +489,95 @@ def _draw_circle_label(
     background_rect = text_rect.inflate(padding * 2, padding)
     pygame_module.draw.rect(surface, (15, 23, 42), background_rect, border_radius=max(6, padding))
     surface.blit(text_surface, text_rect)
+
+
+def _draw_keypoint_overlay_legend(
+    surface: Any,
+    pygame_module: Any,
+    *,
+    show_stage1_full_keypoints: bool,
+    show_stage2_hand_keypoints: bool,
+    stage1_keypoints_conf: tuple[float, ...],
+    stage2_hand_keypoints_conf: tuple[tuple[float, ...], ...],
+    show_overlay_confidence_values: bool,
+    style: dict[str, Any] | None,
+) -> None:
+    style_payload = style or {}
+    font_size = int(style_payload.get("font_size", 18))
+    text_color = tuple(style_payload.get("text_color", [226, 232, 240]))
+    muted_text_color = tuple(style_payload.get("muted_text_color", [148, 163, 184]))
+    background_color = tuple(style_payload.get("background_color", [2, 6, 23]))
+    border_color = tuple(style_payload.get("border_color", [51, 65, 85]))
+    border_width = max(0, int(style_payload.get("border_width", 1)))
+    panel_padding = max(2, int(style_payload.get("panel_padding", 8)))
+    line_spacing = max(0, int(style_payload.get("line_spacing", 4)))
+
+    font = _get_overlay_font(pygame_module, font_size)
+    lines = [
+        ("Keypoint overlays", text_color),
+        (
+            f"Stage-1 full body: {'ON' if show_stage1_full_keypoints else 'OFF'}",
+            text_color if show_stage1_full_keypoints else muted_text_color,
+        ),
+        (
+            f"Stage-2 hand: {'ON' if show_stage2_hand_keypoints else 'OFF'}",
+            text_color if show_stage2_hand_keypoints else muted_text_color,
+        ),
+        (
+            f"Confidence text: {'ON' if show_overlay_confidence_values else 'OFF'}",
+            text_color if show_overlay_confidence_values else muted_text_color,
+        ),
+    ]
+
+    if show_overlay_confidence_values:
+        stage1_avg_conf = _average_confidence(stage1_keypoints_conf)
+        stage2_avg_conf = _average_confidence(
+            tuple(value for row in stage2_hand_keypoints_conf for value in row)
+        )
+        lines.append(
+            (
+                f"Stage-1 avg conf: {stage1_avg_conf:.2f}" if stage1_avg_conf is not None else "Stage-1 avg conf: n/a",
+                muted_text_color,
+            )
+        )
+        lines.append(
+            (
+                f"Stage-2 avg conf: {stage2_avg_conf:.2f}" if stage2_avg_conf is not None else "Stage-2 avg conf: n/a",
+                muted_text_color,
+            )
+        )
+
+    rendered = [font.render(text, True, color) for text, color in lines]
+    max_width = max((item.get_width() for item in rendered), default=0)
+    content_height = sum(item.get_height() for item in rendered)
+    content_height += line_spacing * max(0, len(rendered) - 1)
+    panel_rect = pygame_module.Rect(
+        panel_padding,
+        panel_padding,
+        max_width + panel_padding * 2,
+        content_height + panel_padding * 2,
+    )
+    pygame_module.draw.rect(surface, background_color, panel_rect, border_radius=8)
+    if border_width > 0:
+        pygame_module.draw.rect(
+            surface,
+            border_color,
+            panel_rect,
+            width=border_width,
+            border_radius=8,
+        )
+
+    text_y = panel_rect.y + panel_padding
+    for item in rendered:
+        surface.blit(item, (panel_rect.x + panel_padding, text_y))
+        text_y += item.get_height() + line_spacing
+
+
+def _average_confidence(values: tuple[float, ...]) -> float | None:
+    filtered = [float(value) for value in values if float(value) > 0.0]
+    if not filtered:
+        return None
+    return sum(filtered) / len(filtered)
 
 
 def _lerp(start: int | float, end: int | float, alpha: float) -> float:

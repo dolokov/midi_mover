@@ -2,7 +2,8 @@ app:
   name: midi_mover
   window_width: 1280
   window_height: 720
-  target_fps: 60
+  target_fps: 30
+  song_title_screen_duration_seconds: 2.0
   debug: false
   logging_level: INFO
   random_seed: null
@@ -14,7 +15,7 @@ camera:
 
 pose:
   stage1_model_name: yolo11n-pose.pt
-  stage2_hand_model_name: yolo11n-pose.pt
+  stage2_hand_model_name: /home/alex/data/midi_mover/handcheckpoints/hand_26n_img640_20260411_214709/weights/best.pt
   stage2_roi_expansion_px: 30
   confidence_threshold: 0.5
   iou_threshold: 0.45
@@ -22,7 +23,7 @@ pose:
   stage2_iou_threshold: 0.45
   stage2_missing_fallback_mode: reuse_last
   stage2_missing_fallback_timeout_seconds: 0.25
-  device: cpu
+  device: cuda
   smoothing_factor: 0.35
   lost_person_timeout_seconds: 1.0
 
@@ -57,6 +58,38 @@ liveview:
   debug:
     show_head_center: false
     show_wrist_markers: true
+    show_stage1_full_keypoints: false
+    show_stage2_hand_keypoints: true
+    show_keypoint_overlay_legend: true
+    show_overlay_confidence_values: true
+    keypoint_overlay_legend_style:
+      font_size: 18
+      text_color: [226, 232, 240]
+      muted_text_color: [148, 163, 184]
+      background_color: [2, 6, 23]
+      border_color: [51, 65, 85]
+      border_width: 1
+      panel_padding: 8
+      line_spacing: 4
+    stage1_full_keypoints_style:
+      keypoint_color: [147, 197, 253]
+      keypoint_radius: 4
+      keypoint_outline_color: [30, 64, 175]
+      keypoint_outline_width: 1
+      skeleton_color: [96, 165, 250]
+      skeleton_width: 2
+    stage2_hand_keypoints_style:
+      keypoint_color: [196, 181, 253]
+      keypoint_radius: 3
+      keypoint_outline_color: [91, 33, 182]
+      keypoint_outline_width: 1
+      skeleton_color: [167, 139, 250]
+      skeleton_width: 2
+      emphasize_fingertips: true
+      fingertip_color: [244, 114, 182]
+      fingertip_radius: 6
+      fingertip_outline_color: [131, 24, 67]
+      fingertip_outline_width: 2
   circle_radius_percent: 5.83
   circle_offsets_percent:
     "1": [-36.0, -2.0]
@@ -98,6 +131,13 @@ midi:
   channel_filter: []
   minimum_note_duration_ms: 40
   ignore_meta_events: true
+  adaptive_mapping:
+    enabled: false
+    trigger_note_count: 10
+    rolling_recent_note_buffer_size: 30
+    mode: ranked_low_high
+    creative_seed: 123
+    creative_cycle_span: 8
 
 audio:
   mixer:

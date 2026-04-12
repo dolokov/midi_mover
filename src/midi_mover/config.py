@@ -16,7 +16,6 @@ except ModuleNotFoundError:  # pragma: no cover - exercised in environments with
 class ConfigError(ValueError):
     """Raised when the YAML config is missing required data."""
 
-
 @dataclass(frozen=True)
 class AppConfig:
     raw: dict[str, Any]
@@ -69,6 +68,35 @@ REQUIRED_PATHS: tuple[tuple[str, ...], ...] = (
     ("liveview", "circle_visuals", "miss_flash_duration_ms"),
     ("liveview", "debug", "show_head_center"),
     ("liveview", "debug", "show_wrist_markers"),
+    ("liveview", "debug", "show_stage1_full_keypoints"),
+    ("liveview", "debug", "show_stage2_hand_keypoints"),
+    ("liveview", "debug", "show_keypoint_overlay_legend"),
+    ("liveview", "debug", "show_overlay_confidence_values"),
+    ("liveview", "debug", "keypoint_overlay_legend_style", "font_size"),
+    ("liveview", "debug", "keypoint_overlay_legend_style", "text_color"),
+    ("liveview", "debug", "keypoint_overlay_legend_style", "muted_text_color"),
+    ("liveview", "debug", "keypoint_overlay_legend_style", "background_color"),
+    ("liveview", "debug", "keypoint_overlay_legend_style", "border_color"),
+    ("liveview", "debug", "keypoint_overlay_legend_style", "border_width"),
+    ("liveview", "debug", "keypoint_overlay_legend_style", "panel_padding"),
+    ("liveview", "debug", "keypoint_overlay_legend_style", "line_spacing"),
+    ("liveview", "debug", "stage1_full_keypoints_style", "keypoint_color"),
+    ("liveview", "debug", "stage1_full_keypoints_style", "keypoint_radius"),
+    ("liveview", "debug", "stage1_full_keypoints_style", "keypoint_outline_color"),
+    ("liveview", "debug", "stage1_full_keypoints_style", "keypoint_outline_width"),
+    ("liveview", "debug", "stage1_full_keypoints_style", "skeleton_color"),
+    ("liveview", "debug", "stage1_full_keypoints_style", "skeleton_width"),
+    ("liveview", "debug", "stage2_hand_keypoints_style", "keypoint_color"),
+    ("liveview", "debug", "stage2_hand_keypoints_style", "keypoint_radius"),
+    ("liveview", "debug", "stage2_hand_keypoints_style", "keypoint_outline_color"),
+    ("liveview", "debug", "stage2_hand_keypoints_style", "keypoint_outline_width"),
+    ("liveview", "debug", "stage2_hand_keypoints_style", "skeleton_color"),
+    ("liveview", "debug", "stage2_hand_keypoints_style", "skeleton_width"),
+    ("liveview", "debug", "stage2_hand_keypoints_style", "emphasize_fingertips"),
+    ("liveview", "debug", "stage2_hand_keypoints_style", "fingertip_color"),
+    ("liveview", "debug", "stage2_hand_keypoints_style", "fingertip_radius"),
+    ("liveview", "debug", "stage2_hand_keypoints_style", "fingertip_outline_color"),
+    ("liveview", "debug", "stage2_hand_keypoints_style", "fingertip_outline_width"),
     ("liveview", "circle_radius_percent"),
     ("liveview", "circle_offsets_percent"),
     ("liveview", "circle_stroke_width"),
@@ -223,6 +251,39 @@ def _validate_value_types(payload: dict[str, Any]) -> None:
     _require_type(payload["liveview"]["debug"], dict, "liveview.debug")
     _require_type(payload["liveview"]["debug"]["show_head_center"], bool, "liveview.debug.show_head_center")
     _require_type(payload["liveview"]["debug"]["show_wrist_markers"], bool, "liveview.debug.show_wrist_markers")
+    _require_type(
+        payload["liveview"]["debug"]["show_stage1_full_keypoints"],
+        bool,
+        "liveview.debug.show_stage1_full_keypoints",
+    )
+    _require_type(
+        payload["liveview"]["debug"]["show_stage2_hand_keypoints"],
+        bool,
+        "liveview.debug.show_stage2_hand_keypoints",
+    )
+    _require_type(
+        payload["liveview"]["debug"]["show_keypoint_overlay_legend"],
+        bool,
+        "liveview.debug.show_keypoint_overlay_legend",
+    )
+    _require_type(
+        payload["liveview"]["debug"]["show_overlay_confidence_values"],
+        bool,
+        "liveview.debug.show_overlay_confidence_values",
+    )
+    _validate_overlay_legend_style(
+        payload["liveview"]["debug"]["keypoint_overlay_legend_style"],
+        "liveview.debug.keypoint_overlay_legend_style",
+    )
+    _validate_keypoint_style(
+        payload["liveview"]["debug"]["stage1_full_keypoints_style"],
+        "liveview.debug.stage1_full_keypoints_style",
+    )
+    _validate_keypoint_style(
+        payload["liveview"]["debug"]["stage2_hand_keypoints_style"],
+        "liveview.debug.stage2_hand_keypoints_style",
+        include_fingertips=True,
+    )
     _require_numeric(
         payload["liveview"]["circle_radius_percent"],
         "liveview.circle_radius_percent",
@@ -264,7 +325,6 @@ def _validate_value_types(payload: dict[str, Any]) -> None:
         "midi.minimum_note_duration_ms",
     )
     _require_type(payload["midi"]["ignore_meta_events"], bool, "midi.ignore_meta_events")
-
     _require_type(payload["audio"]["mixer"], dict, "audio.mixer")
     _require_type(payload["audio"]["gesture_sounds"], dict, "audio.gesture_sounds")
     _require_type(payload["audio"]["volumes"], dict, "audio.volumes")
@@ -343,6 +403,45 @@ def _require_color_triplet(value: Any, name: str) -> None:
         _require_type(item, int, f"{name}[{index}]")
         if not 0 <= item <= 255:
             raise ConfigError(f"Config key {name}[{index}] must be between 0 and 255.")
+
+
+def _validate_keypoint_style(
+    style_payload: Any,
+    path: str,
+    *,
+    include_fingertips: bool = False,
+) -> None:
+    _require_type(style_payload, dict, path)
+    _require_color_triplet(style_payload["keypoint_color"], f"{path}.keypoint_color")
+    _require_type(style_payload["keypoint_radius"], int, f"{path}.keypoint_radius")
+    _require_color_triplet(style_payload["keypoint_outline_color"], f"{path}.keypoint_outline_color")
+    _require_type(style_payload["keypoint_outline_width"], int, f"{path}.keypoint_outline_width")
+    _require_color_triplet(style_payload["skeleton_color"], f"{path}.skeleton_color")
+    _require_type(style_payload["skeleton_width"], int, f"{path}.skeleton_width")
+
+    if not include_fingertips:
+        return
+
+    _require_type(style_payload["emphasize_fingertips"], bool, f"{path}.emphasize_fingertips")
+    _require_color_triplet(style_payload["fingertip_color"], f"{path}.fingertip_color")
+    _require_type(style_payload["fingertip_radius"], int, f"{path}.fingertip_radius")
+    _require_color_triplet(
+        style_payload["fingertip_outline_color"],
+        f"{path}.fingertip_outline_color",
+    )
+    _require_type(style_payload["fingertip_outline_width"], int, f"{path}.fingertip_outline_width")
+
+
+def _validate_overlay_legend_style(style_payload: Any, path: str) -> None:
+    _require_type(style_payload, dict, path)
+    _require_type(style_payload["font_size"], int, f"{path}.font_size")
+    _require_color_triplet(style_payload["text_color"], f"{path}.text_color")
+    _require_color_triplet(style_payload["muted_text_color"], f"{path}.muted_text_color")
+    _require_color_triplet(style_payload["background_color"], f"{path}.background_color")
+    _require_color_triplet(style_payload["border_color"], f"{path}.border_color")
+    _require_type(style_payload["border_width"], int, f"{path}.border_width")
+    _require_type(style_payload["panel_padding"], int, f"{path}.panel_padding")
+    _require_type(style_payload["line_spacing"], int, f"{path}.line_spacing")
 
 
 def _validate_circle_visuals(circle_visuals: dict[str, Any]) -> None:

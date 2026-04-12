@@ -32,6 +32,11 @@ from midi_mover.pose import (
     run_pose_inference,
     run_stage2_hand_inference_on_person_roi,
 )
+from midi_mover.timeline import (
+    compute_timeline_panel_layout,
+    draw_timeline_panel_layout,
+    draw_upcoming_timeline_notes,
+)
 
 LOGGER = logging.getLogger("midi_mover")
 _LAST_STAGE2_HAND_INFERENCE: HandRoiInference | None = None
@@ -69,6 +74,8 @@ def render_liveview_frame(
     config: Any,
     gesture_sounds: LoadedGestureSounds | None = None,
     gesture_playback_controller: GesturePlaybackController | None = None,
+    normalized_target_notes: tuple[Any, ...] = (),
+    song_started_monotonic: float | None = None,
 ) -> None:
     if window is None or pygame_module is None:
         raise LiveviewRuntimeError("Liveview rendering failed: pygame window/module was not initialized.")
@@ -78,6 +85,11 @@ def render_liveview_frame(
     left_panel_ratio = float(config.raw["liveview"]["left_panel_ratio"])
     left_panel_width = int(window.get_width() * left_panel_ratio)
     left_panel_height = window.get_height()
+    timeline_layout = compute_timeline_panel_layout(
+        pygame_module=pygame_module,
+        window_width=window.get_width(),
+        window_height=window.get_height(),
+    )
 
     try:
         frame = frame_reader.read(pygame_module)
@@ -95,6 +107,10 @@ def render_liveview_frame(
         raise LiveviewRuntimeError(f"Liveview rendering failed during pose inference: {exc}") from exc
 
     selection = primary_person_tracker.select(pose_result)
+    stage1_keypoints_xy, stage1_keypoints_conf = _extract_stage1_keypoints_for_selection(
+        result=pose_result,
+        selection=selection,
+    )
     hand_inference = _run_hand_roi_inference(
         hand_pose_model=hand_pose_model,
         frame=frame,
@@ -160,6 +176,24 @@ def render_liveview_frame(
     window.fill((0, 0, 0))
     left_panel_rect = pygame_module.Rect(0, 0, left_panel_width, left_panel_height)
     window.fill(padding_color, left_panel_rect)
+    draw_timeline_panel_layout(
+        surface=window,
+        pygame_module=pygame_module,
+        layout=timeline_layout,
+        base_color=(14, 23, 40),
+    )
+    song_elapsed_seconds = 0.0
+    if song_started_monotonic is not None:
+        song_elapsed_seconds = max(0.0, time.monotonic() - float(song_started_monotonic))
+    draw_upcoming_timeline_notes(
+        surface=window,
+        pygame_module=pygame_module,
+        layout=timeline_layout,
+        normalized_target_notes=normalized_target_notes,
+        song_elapsed_seconds=song_elapsed_seconds,
+        lookahead_ms=float(config.raw["gameplay"]["lookahead_ms"]),
+        note_history_ms=float(config.raw["gameplay"]["note_history_ms"]),
+    )
 
     scaled_surface = pygame_module.transform.smoothscale(
         cropped_frame.render_surface,
@@ -184,6 +218,31 @@ def render_liveview_frame(
         show_wrist_markers=bool(config.raw["liveview"]["debug"]["show_wrist_markers"]),
         wrist_marker_radius=int(config.raw["liveview"]["wrist_marker_radius"]),
         wrist_marker_outline_width=int(config.raw["liveview"]["wrist_marker_outline_width"]),
+        show_stage1_full_keypoints=bool(config.raw["liveview"]["debug"]["show_stage1_full_keypoints"]),
+        stage1_keypoints_xy=stage1_keypoints_xy,
+        stage1_keypoints_conf=stage1_keypoints_conf,
+        stage1_full_keypoints_style=dict(
+            config.raw["liveview"]["debug"]["stage1_full_keypoints_style"]
+        ),
+        show_stage2_hand_keypoints=bool(config.raw["liveview"]["debug"]["show_stage2_hand_keypoints"]),
+        stage2_hand_keypoints_xy=(
+            () if hand_inference is None else hand_inference.remapped_keypoints_xy
+        ),
+        stage2_hand_keypoints_conf=(
+            () if hand_inference is None else hand_inference.remapped_keypoints_conf
+        ),
+        stage2_hand_keypoints_style=dict(
+            config.raw["liveview"]["debug"]["stage2_hand_keypoints_style"]
+        ),
+        show_keypoint_overlay_legend=bool(
+            config.raw["liveview"]["debug"]["show_keypoint_overlay_legend"]
+        ),
+        show_overlay_confidence_values=bool(
+            config.raw["liveview"]["debug"]["show_overlay_confidence_values"]
+        ),
+        keypoint_overlay_legend_style=dict(
+            config.raw["liveview"]["debug"]["keypoint_overlay_legend_style"]
+        ),
     )
 
     if layout.visible_width < layout.scaled_width:
@@ -228,6 +287,8 @@ def run_persistent_liveview_loop(
     config: Any,
     gesture_sounds: LoadedGestureSounds | None = None,
     gesture_playback_controller: GesturePlaybackController | None = None,
+    normalized_target_notes: tuple[Any, ...] = (),
+    song_started_monotonic: float | None = None,
 ) -> None:
     target_fps = max(1, int(config.raw["app"]["target_fps"]))
     clock = pygame_module.time.Clock()
@@ -264,6 +325,8 @@ def run_persistent_liveview_loop(
             config=config,
             gesture_sounds=gesture_sounds,
             gesture_playback_controller=gesture_playback_controller,
+            normalized_target_notes=normalized_target_notes,
+            song_started_monotonic=song_started_monotonic,
         )
         clock.tick(target_fps)
 
@@ -370,3 +433,52 @@ def _format_primary_person_log(selection: PrimaryPersonSelection | None) -> str:
         f"index={candidate.index} track_id={candidate.track_id} area={candidate.area:.1f} "
         f"confidence={candidate.confidence:.3f} reason={selection.reason}"
     )
+
+
+def _extract_stage1_keypoints_for_selection(
+    *,
+    result: Any,
+    selection: PrimaryPersonSelection | None,
+) -> tuple[tuple[tuple[float, float], ...], tuple[float, ...]]:
+    if result is None or selection is None:
+        return (), ()
+
+    keypoints = getattr(result, "keypoints", None)
+    if keypoints is None:
+        return (), ()
+
+    keypoints_xy = _to_rows(getattr(keypoints, "xy", None))
+    keypoints_conf = _to_rows(getattr(keypoints, "conf", None))
+    person_index = int(selection.candidate.index)
+    if person_index < 0 or person_index >= len(keypoints_xy):
+        return (), ()
+
+    xy_row = keypoints_xy[person_index]
+    conf_row = keypoints_conf[person_index] if person_index < len(keypoints_conf) else []
+    normalized_xy: list[tuple[float, float]] = []
+    for point in xy_row:
+        if not isinstance(point, (list, tuple)) or len(point) < 2:
+            continue
+        normalized_xy.append((float(point[0]), float(point[1])))
+    normalized_conf = tuple(float(value) for value in conf_row)
+    return tuple(normalized_xy), normalized_conf
+
+
+def _to_rows(value: Any) -> list[list[Any]]:
+    if value is None:
+        return []
+    if hasattr(value, "cpu"):
+        value = value.cpu()
+    if hasattr(value, "numpy"):
+        value = value.numpy()
+    if hasattr(value, "tolist"):
+        value = value.tolist()
+    if value is None or not isinstance(value, list):
+        return []
+    rows: list[list[Any]] = []
+    for row in value:
+        if isinstance(row, (list, tuple)):
+            rows.append(list(row))
+        else:
+            rows.append([row])
+    return rows

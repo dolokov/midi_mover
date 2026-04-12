@@ -5,34 +5,28 @@ from __future__ import annotations
 from dataclasses import dataclass
 import logging
 from pathlib import Path
+import time
 from typing import Any
 
-from midi_mover.camera import CameraFrameError, CameraFrameReader
+from midi_mover.camera import CameraFrameReader
 from midi_mover.cli import StartupOptions, parse_args
 from midi_mover.config import AppConfig, ConfigError, load_config
-from midi_mover.audio import (
-    AudioStartupError,
-    GesturePlaybackController,
-    LoadedGestureSounds,
-    build_gesture_sounds,
-    initialize_audio_output,
-)
-from midi_mover.interaction_visuals import (
-    CircleVisualStateTracker,
-    HandCircleTransitionTracker,
-)
+from midi_mover.audio import AudioStartupError, GesturePlaybackController, LoadedGestureSounds, build_gesture_sounds, initialize_audio_output
+from midi_mover.interaction_visuals import CircleVisualStateTracker, HandCircleTransitionTracker
 from midi_mover.integration_checks import verify_fingertip_audio_integration
 from midi_mover.liveview import CropSmoother
 from midi_mover.logging_utils import configure_logging
-from midi_mover.pose import (
-    GameplayKeypointTracker,
-    PrimaryPersonTracker,
+from midi_mover.midi_files import (
+    MidiDiscoveryError,
+    MidiRandomSelector,
+    discover_supported_midi_files,
+    normalize_supported_extensions,
 )
-from midi_mover.runtime_loop import (
-    LiveviewRuntimeError,
-    render_liveview_frame,
-    run_persistent_liveview_loop,
-)
+from midi_mover.midi_parser import MidiParseError, build_midi_debug_report
+from midi_mover.pose import GameplayKeypointTracker, PrimaryPersonTracker
+from midi_mover.song_intro import build_song_title, show_pre_song_title_screen
+from midi_mover.song_targets import load_normalized_target_notes_from_midi
+from midi_mover.runtime_loop import LiveviewRuntimeError, render_liveview_frame, run_persistent_liveview_loop
 LOGGER = logging.getLogger("midi_mover")
 
 
@@ -324,22 +318,36 @@ def _initialize_circle_visual_tracker(config: AppConfig) -> CircleVisualStateTra
 
 
 def discover_midi_files(midi_dir: Path, config: AppConfig) -> list[Path]:
-    supported_extensions = {
-        str(extension).lower() for extension in config.raw["midi"]["supported_extensions"]
-    }
-    midi_files = sorted(
-        path
-        for path in midi_dir.iterdir()
-        if path.is_file() and path.suffix.lower() in supported_extensions
+    supported_extensions = normalize_supported_extensions(
+        config.raw["midi"]["supported_extensions"],
     )
-    if not midi_files:
-        raise StartupError(
-            f"No supported MIDI files were found in {midi_dir}. "
-            f"Expected one of: {', '.join(sorted(supported_extensions))}."
+    try:
+        midi_files = discover_supported_midi_files(
+            midi_dir,
+            supported_extensions=supported_extensions,
         )
+    except MidiDiscoveryError as exc:
+        raise StartupError(str(exc)) from exc
 
     LOGGER.info("Discovered %s MIDI file(s) in %s.", len(midi_files), midi_dir)
     return midi_files
+
+
+def choose_random_midi_file(midi_files: list[Path], config: AppConfig) -> Path:
+    random_seed = config.raw["app"]["random_seed"]
+    selector = MidiRandomSelector(midi_files, random_seed=random_seed)
+    selected = selector.choose()
+
+    if selector.random_seed is None:
+        LOGGER.info("Selected random MIDI file: %s", selected.name)
+    else:
+        LOGGER.info(
+            "Selected random MIDI file using deterministic seed %s: %s",
+            selector.random_seed,
+            selected.name,
+        )
+
+    return selected
 
 
 def _render_liveview_preview(resources: StartupResources, config: AppConfig) -> None:
@@ -391,6 +399,8 @@ def run_smoke_test(
 ) -> None:
     LOGGER.info("Running startup smoke test.")
     midi_files = discover_midi_files(options.midi_dir, config)
+    selected_midi = choose_random_midi_file(midi_files, config)
+    selected_song_title = build_song_title(selected_midi)
 
     if resources.window is None:
         raise StartupError("Smoke test failed: pygame window was not initialized.")
@@ -431,6 +441,8 @@ def run_smoke_test(
         type(resources.pose_model).__name__,
         len(midi_files),
     )
+    LOGGER.info("Smoke test random MIDI selection result: %s", selected_midi.name)
+    LOGGER.info("Smoke test extracted song title: %s", selected_song_title)
     LOGGER.info("Smoke test completed successfully and exited cleanly.")
 
 
@@ -440,7 +452,31 @@ def run_interactive_runtime(
     resources: StartupResources,
 ) -> None:
     LOGGER.info("Running persistent interactive liveview runtime.")
-    discover_midi_files(options.midi_dir, config)
+    midi_files = discover_midi_files(options.midi_dir, config)
+    selected_midi = choose_random_midi_file(midi_files, config)
+    selected_song_title = build_song_title(selected_midi)
+    if options.midi_inspect:
+        try:
+            LOGGER.info(
+                "\n%s",
+                build_midi_debug_report(
+                    midi_path=selected_midi,
+                    midi_config=config.raw["midi"],
+                    max_notes=options.midi_inspect_max_notes,
+                ),
+            )
+        except MidiParseError as exc:
+            raise StartupError(f"MIDI inspection failed for '{selected_midi.name}': {exc}") from exc
+
+    try:
+        normalized_target_notes = load_normalized_target_notes_from_midi(
+            midi_path=selected_midi,
+            midi_config=config.raw["midi"],
+        )
+    except MidiParseError as exc:
+        raise StartupError(
+            f"Failed to load normalized target notes for timeline rendering from '{selected_midi.name}': {exc}"
+        ) from exc
 
     required = {
         "window": resources.window,
@@ -458,6 +494,16 @@ def run_interactive_runtime(
     if missing:
         raise StartupError(f"Interactive runtime failed: missing initialized resources: {', '.join(missing)}.")
 
+    show_title_screen = show_pre_song_title_screen(
+        pygame_module=resources.pygame_module,
+        window=resources.window,
+        song_title=selected_song_title,
+        duration_seconds=float(config.raw["app"].get("song_title_screen_duration_seconds", 2.0)),
+    )
+    if not show_title_screen:
+        LOGGER.info("Pre-song title screen closed by user before gameplay runtime loop started.")
+        return
+
     try:
         run_persistent_liveview_loop(
             window=resources.window,
@@ -473,6 +519,8 @@ def run_interactive_runtime(
             config=config,
             gesture_sounds=resources.gesture_sounds,
             gesture_playback_controller=resources.gesture_playback_controller,
+            normalized_target_notes=normalized_target_notes,
+            song_started_monotonic=time.monotonic(),
         )
     except LiveviewRuntimeError as exc:
         raise StartupError(str(exc)) from exc
@@ -486,6 +534,7 @@ def _log_startup(options: StartupOptions) -> None:
     LOGGER.info("stage1_pose_model_override=%s", options.stage1_pose_model or "<config>")
     LOGGER.info("stage2_hand_model_override=%s", options.stage2_hand_model or "<config>")
     LOGGER.info("smoke_test=%s", options.smoke_test)
+    LOGGER.info("midi_inspect=%s midi_inspect_max_notes=%s", options.midi_inspect, options.midi_inspect_max_notes)
 
 
 def _log_config_summary(config: AppConfig) -> None:

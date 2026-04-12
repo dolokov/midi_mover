@@ -404,7 +404,7 @@ data/
       </div>
 
       <div class="subcard">
-        <h3>Task 1.7 — Optional liveview rendering of all keypoints from both models <span class="status todo">TODO</span></h3>
+        <h3>Task 1.7 — Optional liveview rendering of all keypoints from both models <span class="status done">DONE</span></h3>
         <p><strong>Context:</strong> Debugging and tuning require visibility into every keypoint emitted by stage-1 and stage-2 models.</p>
         <p><strong>Requirements:</strong></p>
         <ul>
@@ -414,10 +414,10 @@ data/
         </ul>
         <h4>Subtasks</h4>
         <ol>
-          <li><strong>Subtask 1.7.1</strong> <span class="status todo">TODO</span> — Add debug flags and styling parameters for stage-1 full-keypoint overlays.</li>
-          <li><strong>Subtask 1.7.2</strong> <span class="status todo">TODO</span> — Add debug flags and styling parameters for stage-2 hand-keypoint overlays, including fingertip emphasis options.</li>
-          <li><strong>Subtask 1.7.3</strong> <span class="status todo">TODO</span> — Implement draw routines for both full keypoint sets in the liveview transform pipeline.</li>
-          <li><strong>Subtask 1.7.4</strong> <span class="status todo">TODO</span> — Add optional on-screen legend/debug text indicating active keypoint overlay modes and detection confidence visibility.</li>
+          <li><strong>Subtask 1.7.1</strong> <span class="status done">DONE</span> — Add debug flags and styling parameters for stage-1 full-keypoint overlays.</li>
+          <li><strong>Subtask 1.7.2</strong> <span class="status done">DONE</span> — Add debug flags and styling parameters for stage-2 hand-keypoint overlays, including fingertip emphasis options.</li>
+          <li><strong>Subtask 1.7.3</strong> <span class="status done">DONE</span> — Implement draw routines for both full keypoint sets in the liveview transform pipeline.</li>
+          <li><strong>Subtask 1.7.4</strong> <span class="status done">DONE</span> — Add optional on-screen legend/debug text indicating active keypoint overlay modes and detection confidence visibility.</li>
         </ol>
         <p><strong>Definition of done:</strong> Developers can toggle complete stage-1 and stage-2 keypoint overlays in liveview without breaking gameplay readability.</p>
       </div>
@@ -428,7 +428,7 @@ data/
       <p>Goal: load playable MIDI songs from a folder, convert them into timed gameplay targets, render the right-side waterfall timeline, and judge hits/misses against player interaction.</p>
 
       <div class="subcard">
-        <h3>Task 2.1 — MIDI folder discovery, validation, random selection, and title extraction <span class="status todo">TODO</span></h3>
+        <h3>Task 2.1 — MIDI folder discovery, validation, random selection, and title extraction <span class="status done">DONE</span></h3>
         <p><strong>Context:</strong> The runtime must treat the MIDI folder as content input and choose a random song at startup and between rounds.</p>
         <p><strong>Requirements:</strong></p>
         <ul>
@@ -439,16 +439,16 @@ data/
         </ul>
         <h4>Subtasks</h4>
         <ol>
-          <li><strong>Subtask 2.1.1</strong> <span class="status todo">TODO</span> — Implement folder scanning for <code>.mid</code> and <code>.midi</code> files, driven by YAML-supported extensions where appropriate.</li>
-          <li><strong>Subtask 2.1.2</strong> <span class="status todo">TODO</span> — Add validation and clear user-facing errors for missing folder, empty folder, unreadable file, or unsupported content.</li>
-          <li><strong>Subtask 2.1.3</strong> <span class="status todo">TODO</span> — Implement random file selection with deterministic behavior when a YAML seed is configured.</li>
-          <li><strong>Subtask 2.1.4</strong> <span class="status todo">TODO</span> — Extract a human-readable song title from the filename and show it in a pre-song title screen.</li>
+          <li><strong>Subtask 2.1.1</strong> <span class="status done">DONE</span> — Implement folder scanning for <code>.mid</code> and <code>.midi</code> files, driven by YAML-supported extensions where appropriate.</li>
+          <li><strong>Subtask 2.1.2</strong> <span class="status done">DONE</span> — Add validation and clear user-facing errors for missing folder, empty folder, unreadable file, or unsupported content.</li>
+          <li><strong>Subtask 2.1.3</strong> <span class="status done">DONE</span> — Implement random file selection with deterministic behavior when a YAML seed is configured.</li>
+          <li><strong>Subtask 2.1.4</strong> <span class="status done">DONE</span> — Extract a human-readable song title from the filename and show it in a pre-song title screen.</li>
         </ol>
         <p><strong>Definition of done:</strong> The app can reliably discover content, choose a song, and present a clean song title before gameplay begins.</p>
       </div>
 
       <div class="subcard">
-        <h3>Task 2.2 — MIDI parsing and conversion into gameplay targets <span class="status todo">TODO</span></h3>
+        <h3>Task 2.2 — MIDI parsing and conversion into gameplay targets <span class="status done">DONE</span></h3>
         <p><strong>Context:</strong> The game needs a precise timed sequence of tokens like <code>L3</code> or <code>R5</code>. MIDI is the input format, but gameplay tokens are the internal format.</p>
         <p><strong>Requirements:</strong></p>
         <ul>
@@ -461,25 +461,25 @@ data/
         <p><strong>Important design decision:</strong> The baseline playable mapping from MIDI note number to gesture token must remain explicit and YAML-driven. In addition, an optional adaptive mapping mode may remap notes over time using deterministic rules and YAML-defined parameters.</p>
         <h4>Subtasks</h4>
         <ol>
-          <li><strong>Subtask 2.2.1</strong> <span class="status todo">TODO</span> — Parse MIDI with mido and convert events into absolute time. Handle tempo changes correctly.</li>
-          <li><strong>Subtask 2.2.2</strong> <span class="status todo">TODO</span> — Filter to playable note events using YAML-configured track/channel/note rules.</li>
-          <li><strong>Subtask 2.2.3</strong> <span class="status todo">TODO</span> — Map playable MIDI note numbers into gameplay tokens <code>L1..L5</code> / <code>R1..R5</code> using a YAML mapping table.</li>
-          <li><strong>Subtask 2.2.4</strong> <span class="status todo">TODO</span> — Build the normalized target-note structure used by timeline rendering and hit judgment.</li>
-          <li><strong>Subtask 2.2.5</strong> <span class="status todo">TODO</span> — Add a debug print or on-screen inspection mode to verify parsed note timing and token conversion during development.</li>
+          <li><strong>Subtask 2.2.1</strong> <span class="status done">DONE</span> — Parse MIDI with mido and convert events into absolute time. Handle tempo changes correctly.</li>
+          <li><strong>Subtask 2.2.2</strong> <span class="status done">DONE</span> — Filter to playable note events using YAML-configured track/channel/note rules.</li>
+          <li><strong>Subtask 2.2.3</strong> <span class="status done">DONE</span> — Map playable MIDI note numbers into gameplay tokens <code>L1..L5</code> / <code>R1..R5</code> using a YAML mapping table.</li>
+          <li><strong>Subtask 2.2.4</strong> <span class="status done">DONE</span> — Build the normalized target-note structure used by timeline rendering and hit judgment.</li>
+          <li><strong>Subtask 2.2.5</strong> <span class="status done">DONE</span> — Add a debug print or on-screen inspection mode to verify parsed note timing and token conversion during development.</li>
         </ol>
         <h4>Follow-up subtasks requested after initial completion</h4>
         <ol>
-          <li><strong>Subtask 2.2.6</strong> <span class="status todo">TODO</span> — Add optional adaptive mapping for songs containing more than ten relevant MIDI notes, allowing multiple source notes to map onto the same gesture circles over time.</li>
-          <li><strong>Subtask 2.2.7</strong> <span class="status todo">TODO</span> — Implement a rolling recent-note buffer (default 30 notes, YAML-configurable) as context for adaptive mapping decisions.</li>
-          <li><strong>Subtask 2.2.8</strong> <span class="status todo">TODO</span> — Implement a deterministic “low notes to low circles” ranking policy based on the rolling buffer so lower recent notes trend toward lower-index circles and higher notes toward higher-index circles.</li>
-          <li><strong>Subtask 2.2.9</strong> <span class="status todo">TODO</span> — Add a YAML-configurable creative/adaptive mode variant that introduces musically interesting remap behavior while staying deterministic under fixed seed.</li>
-          <li><strong>Subtask 2.2.10</strong> <span class="status todo">TODO</span> — Add mapping-state debug/introspection output showing rolling buffer contents and current note-to-circle assignment over time.</li>
+          <li><strong>Subtask 2.2.6</strong> <span class="status done">DONE</span> — Add optional adaptive mapping for songs containing more than ten relevant MIDI notes, allowing multiple source notes to map onto the same gesture circles over time.</li>
+          <li><strong>Subtask 2.2.7</strong> <span class="status done">DONE</span> — Implement a rolling recent-note buffer (default 30 notes, YAML-configurable) as context for adaptive mapping decisions.</li>
+          <li><strong>Subtask 2.2.8</strong> <span class="status done">DONE</span> — Implement a deterministic “low notes to low circles” ranking policy based on the rolling buffer so lower recent notes trend toward lower-index circles and higher notes toward higher-index circles.</li>
+          <li><strong>Subtask 2.2.9</strong> <span class="status done">DONE</span> — Add a YAML-configurable creative/adaptive mode variant that introduces musically interesting remap behavior while staying deterministic under fixed seed.</li>
+          <li><strong>Subtask 2.2.10</strong> <span class="status done">DONE</span> — Add mapping-state debug/introspection output showing rolling buffer contents and current note-to-circle assignment over time.</li>
         </ol>
         <p><strong>Definition of done:</strong> Any supported MIDI file can be transformed into a deterministic list of gameplay notes that later subsystems can consume.</p>
       </div>
 
       <div class="subcard">
-        <h3>Task 2.3 — Right-panel timeline layout and note-waterfall renderer <span class="status todo">TODO</span></h3>
+        <h3>Task 2.3 — Right-panel timeline layout and note-waterfall renderer <span class="status done">DONE</span></h3>
         <p><strong>Context:</strong> The right 40% of the screen is the gameplay reference. It must be readable, stable, and strictly aligned with the five circles.</p>
         <p><strong>Requirements:</strong></p>
         <ul>
@@ -491,11 +491,11 @@ data/
         </ul>
         <h4>Subtasks</h4>
         <ol>
-          <li><strong>Subtask 2.3.1</strong> <span class="status todo">TODO</span> — Implement the right-panel layout at a fixed 40% width with five equally readable lanes.</li>
-          <li><strong>Subtask 2.3.2</strong> <span class="status todo">TODO</span> — Render lane headers, lane separators, and a strong horizontal now line at 25% of panel height.</li>
-          <li><strong>Subtask 2.3.3</strong> <span class="status todo">TODO</span> — Render upcoming notes falling top-to-bottom based on the normalized target-note timing list.</li>
-          <li><strong>Subtask 2.3.4</strong> <span class="status todo">TODO</span> — Render each note with readable hand identity. Using <code>L</code> or <code>R</code> inside the note block is acceptable because the lane already represents the circle number.</li>
-          <li><strong>Subtask 2.3.5</strong> <span class="status todo">TODO</span> — Keep notes visible after judgment long enough to show green/red history below the now line, with duration controlled by YAML.</li>
+          <li><strong>Subtask 2.3.1</strong> <span class="status done">DONE</span> — Implement the right-panel layout at a fixed 40% width with five equally readable lanes.</li>
+          <li><strong>Subtask 2.3.2</strong> <span class="status done">DONE</span> — Render lane headers, lane separators, and a strong horizontal now line at 25% of panel height.</li>
+          <li><strong>Subtask 2.3.3</strong> <span class="status done">DONE</span> — Render upcoming notes falling top-to-bottom based on the normalized target-note timing list.</li>
+          <li><strong>Subtask 2.3.4</strong> <span class="status done">DONE</span> — Render each note with readable hand identity. Using <code>L</code> or <code>R</code> inside the note block is acceptable because the lane already represents the circle number.</li>
+          <li><strong>Subtask 2.3.5</strong> <span class="status done">DONE</span> — Keep notes visible after judgment long enough to show green/red history below the now line, with duration controlled by YAML.</li>
         </ol>
         <p><strong>Definition of done:</strong> The timeline visually communicates upcoming notes, judgment timing, and recent history in a stable five-lane waterfall display.</p>
       </div>

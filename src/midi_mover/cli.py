@@ -16,6 +16,8 @@ class StartupOptions:
     stage2_hand_model: str | None
     log_level: str
     smoke_test: bool
+    midi_inspect: bool
+    midi_inspect_max_notes: int
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -76,6 +78,20 @@ def build_parser() -> argparse.ArgumentParser:
             "perform lightweight validation, and exit cleanly without entering gameplay."
         ),
     )
+    parser.add_argument(
+        "--midi-inspect",
+        action="store_true",
+        help=(
+            "Print a development inspection report of parsed MIDI note timing and "
+            "gesture-token conversion for the selected song before gameplay."
+        ),
+    )
+    parser.add_argument(
+        "--midi-inspect-max-notes",
+        type=int,
+        default=20,
+        help="Maximum number of converted notes to print in --midi-inspect mode. Default: 20.",
+    )
     return parser
 
 
@@ -126,6 +142,12 @@ def parse_args(argv: list[str] | None = None) -> StartupOptions:
             "or omit the flag to use pose.stage2_hand_model_name from YAML."
         )
 
+    midi_inspect_max_notes = int(namespace.midi_inspect_max_notes)
+    if midi_inspect_max_notes <= 0:
+        parser.error(
+            f"--midi-inspect-max-notes must be a positive integer, got {midi_inspect_max_notes}."
+        )
+
     return StartupOptions(
         camera_id=camera_id,
         midi_dir=midi_dir,
@@ -134,4 +156,6 @@ def parse_args(argv: list[str] | None = None) -> StartupOptions:
         stage2_hand_model=stage2_hand_model.strip() if stage2_hand_model is not None else None,
         log_level=namespace.log_level,
         smoke_test=bool(namespace.smoke_test),
+        midi_inspect=bool(namespace.midi_inspect),
+        midi_inspect_max_notes=midi_inspect_max_notes,
     )
