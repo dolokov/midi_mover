@@ -44,6 +44,19 @@ class TimelinePanelLayout:
     now_line_y: int
 
 
+@dataclass(frozen=True)
+class TimelineScoreSnapshot:
+    """Read-only gameplay metric snapshot shown on the timeline panel."""
+
+    score: int
+    combo: int
+    max_combo: int
+    total_hits: int
+    total_misses: int
+    total_notes: int
+    percentage_hit: float
+
+
 def compute_timeline_panel_layout(
     *,
     pygame_module: Any,
@@ -152,7 +165,7 @@ def project_upcoming_timeline_notes(
     """Project upcoming normalized target notes into timeline-lane rectangles."""
 
     safe_lookahead_ms = max(1.0, float(lookahead_ms))
-    elapsed_ms = max(0.0, float(song_elapsed_seconds) * 1000.0)
+    elapsed_ms = float(song_elapsed_seconds) * 1000.0
     projected: list[TimelineFallingNote] = []
     note_height = max(12, int(layout.panel_rect.height * 0.03))
     note_margin_x = max(3, int(layout.panel_rect.width * 0.004))
@@ -202,7 +215,7 @@ def project_timeline_note_history(
     """Project post-now judged notes into the visible history area below the now line."""
 
     safe_note_history_ms = max(1.0, float(note_history_ms))
-    elapsed_ms = max(0.0, float(song_elapsed_seconds) * 1000.0)
+    elapsed_ms = float(song_elapsed_seconds) * 1000.0
     note_height = max(12, int(layout.panel_rect.height * 0.03))
     note_margin_x = max(3, int(layout.panel_rect.width * 0.004))
     history_bottom = max(layout.now_line_y + note_height, layout.panel_rect.bottom - note_height)
@@ -256,6 +269,7 @@ def draw_upcoming_timeline_notes(
     lookahead_ms: float,
     note_history_ms: float,
     judged_note_outcomes: dict[str, str] | None = None,
+    gameplay_score_state: TimelineScoreSnapshot | Any | None = None,
 ) -> None:
     """Draw upcoming notes plus judged note history below the now line."""
 
@@ -298,6 +312,60 @@ def draw_upcoming_timeline_notes(
         hand_surface = hand_font.render(falling_note.hand, True, hand_text_color)
         hand_rect = hand_surface.get_rect(center=falling_note.rect.center)
         surface.blit(hand_surface, hand_rect)
+
+    if gameplay_score_state is not None:
+        _draw_timeline_score_overlay(
+            surface=surface,
+            pygame_module=pygame_module,
+            layout=layout,
+            gameplay_score_state=gameplay_score_state,
+        )
+
+
+def _draw_timeline_score_overlay(
+    *,
+    surface: Any,
+    pygame_module: Any,
+    layout: TimelinePanelLayout,
+    gameplay_score_state: TimelineScoreSnapshot | Any,
+) -> None:
+    panel_width = layout.panel_rect.width
+    font_size = max(14, min(26, int(panel_width * 0.055)))
+    font = pygame_module.font.SysFont(None, font_size, bold=True)
+    text_color = (226, 232, 240)
+    muted_color = (148, 163, 184)
+    bg_color = (2, 6, 23)
+    border_color = (51, 65, 85)
+    margin = max(8, int(panel_width * 0.03))
+    line_gap = max(4, int(font_size * 0.25))
+    score = int(getattr(gameplay_score_state, "score", 0))
+    combo = int(getattr(gameplay_score_state, "combo", 0))
+    max_combo = int(getattr(gameplay_score_state, "max_combo", 0))
+    total_hits = int(getattr(gameplay_score_state, "total_hits", 0))
+    total_misses = int(getattr(gameplay_score_state, "total_misses", 0))
+    total_notes = int(getattr(gameplay_score_state, "total_notes", 0))
+    percentage_hit = float(getattr(gameplay_score_state, "percentage_hit", 0.0))
+    lines = (
+        (f"Score {score}", text_color),
+        (f"Combo {combo}  Max {max_combo}", muted_color),
+        (f"Hits {total_hits}  Misses {total_misses}  Notes {total_notes}", muted_color),
+        (f"Hit {percentage_hit:.1f}%", text_color),
+    )
+    rendered = [font.render(text, True, color) for text, color in lines]
+    content_width = max((line.get_width() for line in rendered), default=0)
+    content_height = sum(line.get_height() for line in rendered) + line_gap * max(0, len(rendered) - 1)
+    panel_rect = pygame_module.Rect(
+        layout.panel_rect.x + margin,
+        layout.panel_rect.y + margin,
+        min(layout.panel_rect.width - (margin * 2), content_width + (margin * 2)),
+        content_height + (margin * 2),
+    )
+    pygame_module.draw.rect(surface, bg_color, panel_rect, border_radius=8)
+    pygame_module.draw.rect(surface, border_color, panel_rect, width=1, border_radius=8)
+    cursor_y = panel_rect.y + margin
+    for line_surface in rendered:
+        surface.blit(line_surface, (panel_rect.x + margin, cursor_y))
+        cursor_y += line_surface.get_height() + line_gap
 
 
 def _mix_color(

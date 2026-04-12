@@ -4,6 +4,7 @@ app:
   window_height: 720
   target_fps: 30
   song_title_screen_duration_seconds: 2.0
+  song_summary_screen_duration_seconds: 3.0
   debug: false
   logging_level: INFO
   random_seed: null
@@ -104,6 +105,7 @@ liveview:
   padding_color: [10, 18, 32]
 
 gameplay:
+  pre_song_lead_in_ms: 1000
   hit_window_ms: 120
   early_late_tolerance_ms: 180
   debounce_ms: 90
@@ -142,6 +144,59 @@ midi:
     creative_cycle_span: 8
 
 audio:
+  backend: pygame
+  fluidsynth:
+    soundfont_path: ""
+    sample_rate: 44100
+    gain: 0.5
+    polyphony: 256
+    audio_driver: null
+    audio_buffer_size: 64
+    instrument_profile: null
+    reverb:
+      enabled: true
+      room_size: 0.35
+      damping: 0.25
+      width: 0.6
+      level: 0.75
+    chorus:
+      enabled: false
+      voices: 3
+      level: 1.2
+      speed: 0.3
+      depth_ms: 8.0
+      waveform: sine
+    instrument_profiles:
+      concert_piano:
+        channels:
+          "0": { bank: 0, program: 0 }
+        effects:
+          reverb:
+            enabled: true
+            room_size: 0.32
+            damping: 0.18
+            width: 0.55
+            level: 0.62
+          chorus:
+            enabled: false
+      synth_lead:
+        channels:
+          "0": { bank: 0, program: 80 }
+        effects:
+          reverb:
+            enabled: true
+            room_size: 0.52
+            damping: 0.34
+            width: 0.82
+            level: 0.88
+          chorus:
+            enabled: true
+            voices: 4
+            level: 1.8
+            speed: 0.55
+            depth_ms: 11.0
+            waveform: triangle
+    channel_instruments: {}
   mixer:
     frequency: 44100
     size: -16

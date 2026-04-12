@@ -501,7 +501,7 @@ data/
       </div>
 
       <div class="subcard">
-        <h3>Task 2.4 — Song-state timing, gameplay judgment, scoring, and on-screen feedback <span class="status todo">TODO</span></h3>
+        <h3>Task 2.4 — Song-state timing, gameplay judgment, scoring, and on-screen feedback <span class="status done">DONE</span></h3>
         <p><strong>Context:</strong> The game becomes playable when real-time wrist-circle events are compared against the target-note timeline.</p>
         <p><strong>Requirements:</strong></p>
         <ul>
@@ -513,17 +513,17 @@ data/
         </ul>
         <h4>Subtasks</h4>
         <ol>
-          <li><strong>Subtask 2.4.1</strong> <span class="status todo">TODO</span> — Implement a song clock and pre-song lead-in so the first judged note does not appear immediately on screen.</li>
-          <li><strong>Subtask 2.4.2</strong> <span class="status todo">TODO</span> — Compare hand-in-circle interaction events against target notes using correct hand, correct lane, and hit window tolerance.</li>
-          <li><strong>Subtask 2.4.3</strong> <span class="status todo">TODO</span> — Mark notes as hit or miss, persist their judged state, and color timeline history green or red after the now line.</li>
-          <li><strong>Subtask 2.4.4</strong> <span class="status todo">TODO</span> — Compute score, combo, total hits, total misses, and percentage hit. All scoring constants must come from YAML.</li>
-          <li><strong>Subtask 2.4.5</strong> <span class="status todo">TODO</span> — Connect judgment events back to the liveview so circles flash green on hit and red on miss.</li>
+          <li><strong>Subtask 2.4.1</strong> <span class="status done">DONE</span> — Implement a song clock and pre-song lead-in so the first judged note does not appear immediately on screen.</li>
+          <li><strong>Subtask 2.4.2</strong> <span class="status done">DONE</span> — Compare hand-in-circle interaction events against target notes using correct hand, correct lane, and hit window tolerance.</li>
+          <li><strong>Subtask 2.4.3</strong> <span class="status done">DONE</span> — Mark notes as hit or miss, persist their judged state, and color timeline history green or red after the now line.</li>
+          <li><strong>Subtask 2.4.4</strong> <span class="status done">DONE</span> — Compute score, combo, total hits, total misses, and percentage hit. All scoring constants must come from YAML.</li>
+          <li><strong>Subtask 2.4.5</strong> <span class="status done">DONE</span> — Connect judgment events back to the liveview so circles flash green on hit and red on miss.</li>
         </ol>
         <p><strong>Definition of done:</strong> The application can run a full playable song, judge performance in real time, and produce stable gameplay metrics.</p>
       </div>
 
       <div class="subcard">
-        <h3>Task 2.5 — Screen flow for song title, gameplay, and song-complete summary <span class="status todo">TODO</span></h3>
+        <h3>Task 2.5 — Screen flow for song title, gameplay, and song-complete summary <span class="status done">DONE</span></h3>
         <p><strong>Context:</strong> The player experience depends on clean state transitions. This task formalizes the basic round loop before highscores are added.</p>
         <p><strong>Requirements:</strong></p>
         <ul>
@@ -533,9 +533,9 @@ data/
         </ul>
         <h4>Subtasks</h4>
         <ol>
-          <li><strong>Subtask 2.5.1</strong> <span class="status todo">TODO</span> — Implement a pre-song title screen with configurable duration.</li>
-          <li><strong>Subtask 2.5.2</strong> <span class="status todo">TODO</span> — Implement gameplay-state entry/exit transitions with clean timing handoff from title screen to active song.</li>
-          <li><strong>Subtask 2.5.3</strong> <span class="status todo">TODO</span> — Implement a song-complete summary screen that shows final run metrics and is ready to hand off to the highscore system.</li>
+          <li><strong>Subtask 2.5.1</strong> <span class="status done">DONE</span> — Implement a pre-song title screen with configurable duration.</li>
+          <li><strong>Subtask 2.5.2</strong> <span class="status done">DONE</span> — Implement gameplay-state entry/exit transitions with clean timing handoff from title screen to active song.</li>
+          <li><strong>Subtask 2.5.3</strong> <span class="status done">DONE</span> — Implement a song-complete summary screen that shows final run metrics and is ready to hand off to the highscore system.</li>
         </ol>
         <p><strong>Definition of done:</strong> The app can move from chosen song to title intro to gameplay to song summary without manual intervention.</p>
       </div>
@@ -554,12 +554,12 @@ data/
         </ul>
         <h4>Subtasks</h4>
         <ol>
-          <li><strong>Subtask 2.6.1</strong> <span class="status todo">TODO</span> — Add an audio backend interface and route target-song playback through it, selectable by <code>audio.backend</code> in YAML.</li>
-          <li><strong>Subtask 2.6.2</strong> <span class="status todo">TODO</span> — Implement a <code>pyfluidsynth</code> backend that initializes the synth, loads a configured <code>.sf2</code>, and reports actionable errors if setup fails.</li>
-          <li><strong>Subtask 2.6.3</strong> <span class="status todo">TODO</span> — Add YAML config keys for FluidSynth core settings: sample rate, gain, polyphony, audio driver/buffer options.</li>
-          <li><strong>Subtask 2.6.4</strong> <span class="status todo">TODO</span> — Implement MIDI program/bank handling and optional YAML instrument-profile overrides for more musical presets.</li>
-          <li><strong>Subtask 2.6.5</strong> <span class="status todo">TODO</span> — Add YAML controls for reverb/chorus and verify subjective sound improvements across at least two different instrument profiles.</li>
-          <li><strong>Subtask 2.6.6</strong> <span class="status todo">TODO</span> — Ensure note on/off scheduling remains tightly aligned with gameplay timing and timeline visualization.</li>
+          <li><strong>Subtask 2.6.1</strong> <span class="status done">DONE</span> — Add an audio backend interface and route target-song playback through it, selectable by <code>audio.backend</code> in YAML.</li>
+          <li><strong>Subtask 2.6.2</strong> <span class="status done">DONE</span> — Implement a <code>pyfluidsynth</code> backend that initializes the synth, loads a configured <code>.sf2</code>, and reports actionable errors if setup fails.</li>
+          <li><strong>Subtask 2.6.3</strong> <span class="status done">DONE</span> — Add YAML config keys for FluidSynth core settings: sample rate, gain, polyphony, audio driver/buffer options.</li>
+          <li><strong>Subtask 2.6.4</strong> <span class="status done">DONE</span> — Implement MIDI program/bank handling and optional YAML instrument-profile overrides for more musical presets.</li>
+          <li><strong>Subtask 2.6.5</strong> <span class="status done">DONE</span> — Add YAML controls for reverb/chorus and verify subjective sound improvements across at least two different instrument profiles.</li>
+          <li><strong>Subtask 2.6.6</strong> <span class="status done">DONE</span> — Ensure note on/off scheduling remains tightly aligned with gameplay timing and timeline visualization.</li>
           <li><strong>Subtask 2.6.7</strong> <span class="status todo">TODO</span> — Keep immediate interaction cues functional (hit/miss/UI), either via backend routing or a mixed strategy, without noticeable latency regressions.</li>
           <li><strong>Subtask 2.6.8</strong> <span class="status todo">TODO</span> — Implement graceful fallback to pygame backend when FluidSynth dependencies or SoundFont assets are missing, with clear runtime logging.</li>
         </ol>

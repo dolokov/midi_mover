@@ -279,6 +279,8 @@ class CircleVisualStateTracker:
         circle_geometries: tuple[CircleGeometry, ...],
         gameplay_keypoints: GameplayKeypoints | None,
         interaction_snapshot: InteractionStateSnapshot | None = None,
+        hit_lanes: tuple[int, ...] = (),
+        miss_lanes: tuple[int, ...] = (),
         now_monotonic: float | None = None,
     ) -> tuple[CircleVisualState, ...]:
         timestamp = time.monotonic() if now_monotonic is None else float(now_monotonic)
@@ -291,22 +293,19 @@ class CircleVisualStateTracker:
             )
         contacts = interaction_snapshot_to_circle_contacts(interactions, circle_geometries)
         current_contacts = {contact.lane: contact.active_hands for contact in contacts}
-        previous_contacts = dict(self._previous_contacts)
 
-        for lane, hands in current_contacts.items():
-            previous_hands = previous_contacts.get(lane, ())
-            if hands and not previous_hands:
-                self._flash_states[lane] = CircleFlashState(
-                    lane=lane,
-                    state_name="hit_flash",
-                    expires_at_monotonic=timestamp + (self._hit_flash_duration_ms / 1000.0),
-                )
-            elif previous_hands and not hands:
-                self._flash_states[lane] = CircleFlashState(
-                    lane=lane,
-                    state_name="miss_flash",
-                    expires_at_monotonic=timestamp + (self._miss_flash_duration_ms / 1000.0),
-                )
+        for lane in hit_lanes:
+            self._flash_states[int(lane)] = CircleFlashState(
+                lane=int(lane),
+                state_name="hit_flash",
+                expires_at_monotonic=timestamp + (self._hit_flash_duration_ms / 1000.0),
+            )
+        for lane in miss_lanes:
+            self._flash_states[int(lane)] = CircleFlashState(
+                lane=int(lane),
+                state_name="miss_flash",
+                expires_at_monotonic=timestamp + (self._miss_flash_duration_ms / 1000.0),
+            )
 
         self._flash_states = {
             lane: flash

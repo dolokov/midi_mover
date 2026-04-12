@@ -17,6 +17,7 @@ from midi_mover.interaction_visuals import (
     describe_transition_snapshot,
     detect_hand_circle_interactions,
 )
+from midi_mover.judgment import GameplayScoreState, GameplayScoreTracker, HitWindowJudge
 from midi_mover.liveview import (
     CropSmoother,
     compute_liveview_layout,
@@ -42,18 +43,18 @@ from midi_mover.timeline import (
 LOGGER = logging.getLogger("midi_mover")
 _LAST_STAGE2_HAND_INFERENCE: HandRoiInference | None = None
 _LAST_STAGE2_HAND_INFERENCE_AT: float | None = None
+def _final_score_state_or_none(gameplay_score_tracker: GameplayScoreTracker | None) -> GameplayScoreState | None:
+    if gameplay_score_tracker is None:
+        return None
+    return gameplay_score_tracker.state
 
 
 class LiveviewRuntimeError(RuntimeError):
     """Raised when the persistent liveview runtime cannot continue safely."""
-
-
 def resolve_frame_hand_swap(*, frame_mirrored: bool, config: Any) -> bool:
     """Resolve whether handedness should be swapped for this mirrored frame."""
 
     return bool(frame_mirrored) and bool(config.raw["gameplay"].get("swap_hands_when_mirrored", False))
-
-
 def resolve_overlay_gameplay_keypoints(*, gameplay_keypoints: Any, swap_hands: bool) -> Any:
     """Return gameplay keypoints adjusted for overlay wrist labeling when swapping is active."""
 
@@ -64,8 +65,6 @@ def resolve_overlay_gameplay_keypoints(*, gameplay_keypoints: Any, swap_hands: b
         left_wrist=getattr(gameplay_keypoints, "right_wrist", None),
         right_wrist=getattr(gameplay_keypoints, "left_wrist", None),
     )
-
-
 def load_circle_visual_styles(config: Any) -> dict[str, CircleVisualStyle]:
     visuals = config.raw["liveview"]["circle_visuals"]
     return {
@@ -76,8 +75,6 @@ def load_circle_visual_styles(config: Any) -> dict[str, CircleVisualStyle]:
         )
         for state_name in ("idle", "active_contact", "hit_flash", "miss_flash")
     }
-
-
 def render_liveview_frame(
     *,
     window: Any,
@@ -95,6 +92,9 @@ def render_liveview_frame(
     gesture_playback_controller: GesturePlaybackController | None = None,
     normalized_target_notes: tuple[Any, ...] = (),
     song_started_monotonic: float | None = None,
+    pre_song_lead_in_ms: float = 0.0,
+    hit_window_judge: HitWindowJudge | None = None,
+    gameplay_score_tracker: GameplayScoreTracker | None = None,
 ) -> None:
     if window is None or pygame_module is None:
         raise LiveviewRuntimeError("Liveview rendering failed: pygame window/module was not initialized.")
@@ -171,6 +171,43 @@ def render_liveview_frame(
         resolved_swap_hands,
     )
     transition_snapshot = interaction_transition_tracker.update(interaction_snapshot)
+    judged_hit_lanes: tuple[int, ...] = ()
+    judged_miss_lanes: tuple[int, ...] = ()
+    if hit_window_judge is not None:
+        judged_hits = hit_window_judge.register_transition_snapshot(
+            transition_snapshot=transition_snapshot,
+            song_started_monotonic=song_started_monotonic,
+            pre_song_lead_in_ms=pre_song_lead_in_ms,
+        )
+        if song_started_monotonic is not None:
+            lead_in_seconds = max(0.0, float(pre_song_lead_in_ms) / 1000.0)
+            song_elapsed_seconds = time.monotonic() - float(song_started_monotonic) - lead_in_seconds
+            hit_window_judge.mark_misses_for_song_elapsed_ms(song_elapsed_seconds * 1000.0)
+        if gameplay_score_tracker is not None:
+            gameplay_score_tracker.register_hits(judged_hits)
+            gameplay_score_tracker.sync_total_misses(hit_window_judge.miss_count())
+        judged_hit_lanes = tuple(sorted({int(hit.lane) for hit in judged_hits}))
+        newly_missed_note_ids = hit_window_judge.consume_newly_missed_note_ids()
+        if newly_missed_note_ids:
+            missed_note_id_set = set(newly_missed_note_ids)
+            judged_miss_lanes = tuple(
+                sorted(
+                    {
+                        int(getattr(note, "lane", 0))
+                        for note in normalized_target_notes
+                        if str(getattr(note, "target_note_id", "")) in missed_note_id_set
+                    }
+                )
+            )
+        if judged_hits:
+            LOGGER.info(
+                "Judged %s hit(s) this frame: %s",
+                len(judged_hits),
+                ", ".join(
+                    f"{hit.token}@{hit.note_timestamp_ms:.1f}ms Δ{hit.timing_error_ms:+.1f}ms"
+                    for hit in judged_hits
+                ),
+            )
     if gesture_sounds is not None and gesture_playback_controller is not None:
         gesture_playback_controller.update(
             pygame_module=pygame_module,
@@ -181,6 +218,8 @@ def render_liveview_frame(
         circle_geometries=circle_geometries,
         gameplay_keypoints=gameplay_keypoints,
         interaction_snapshot=interaction_snapshot,
+        hit_lanes=judged_hit_lanes,
+        miss_lanes=judged_miss_lanes,
     )
     target_layout = compute_liveview_layout(
         frame_width=frame.width,
@@ -218,7 +257,14 @@ def render_liveview_frame(
     )
     song_elapsed_seconds = 0.0
     if song_started_monotonic is not None:
-        song_elapsed_seconds = max(0.0, time.monotonic() - float(song_started_monotonic))
+        lead_in_seconds = max(0.0, float(pre_song_lead_in_ms) / 1000.0)
+        song_elapsed_seconds = time.monotonic() - float(song_started_monotonic) - lead_in_seconds
+    judged_note_outcomes: dict[str, str] | None = None
+    if hit_window_judge is not None:
+        judged_note_outcomes = hit_window_judge.judged_note_outcomes
+    gameplay_score_state = None
+    if gameplay_score_tracker is not None:
+        gameplay_score_state = gameplay_score_tracker.state
     draw_upcoming_timeline_notes(
         surface=window,
         pygame_module=pygame_module,
@@ -227,6 +273,8 @@ def render_liveview_frame(
         song_elapsed_seconds=song_elapsed_seconds,
         lookahead_ms=float(config.raw["gameplay"]["lookahead_ms"]),
         note_history_ms=float(config.raw["gameplay"]["note_history_ms"]),
+        judged_note_outcomes=judged_note_outcomes,
+        gameplay_score_state=gameplay_score_state,
     )
 
     scaled_surface = pygame_module.transform.smoothscale(
@@ -304,8 +352,6 @@ def render_liveview_frame(
         hand_inference=hand_inference,
         transition_snapshot=transition_snapshot,
     )
-
-
 def run_persistent_liveview_loop(
     *,
     window: Any,
@@ -323,7 +369,10 @@ def run_persistent_liveview_loop(
     gesture_playback_controller: GesturePlaybackController | None = None,
     normalized_target_notes: tuple[Any, ...] = (),
     song_started_monotonic: float | None = None,
-) -> None:
+    pre_song_lead_in_ms: float = 0.0,
+    song_audio_start: Any | None = None,
+    song_audio_start_at_monotonic: float | None = None,
+) -> tuple[str, GameplayScoreState | None]:
     target_fps = max(1, int(config.raw["app"]["target_fps"]))
     clock = pygame_module.time.Clock()
     LOGGER.info(
@@ -331,19 +380,49 @@ def run_persistent_liveview_loop(
         target_fps,
     )
     running = True
+    hit_window_judge: HitWindowJudge | None = None
+    gameplay_score_tracker: GameplayScoreTracker | None = None
+    if normalized_target_notes:
+        hit_window_judge = HitWindowJudge(
+            normalized_target_notes=normalized_target_notes,
+            hit_window_ms=float(config.raw["gameplay"]["hit_window_ms"]),
+        )
+        score_values = config.raw["gameplay"]["score_values"]
+        gameplay_score_tracker = GameplayScoreTracker(
+            total_notes=len(normalized_target_notes),
+            hit_score=int(score_values["hit"]),
+            miss_score=int(score_values["miss"]),
+            combo_bonus=int(score_values["combo_bonus"]),
+        )
+    song_complete_at_monotonic: float | None = None
+    if song_started_monotonic is not None and normalized_target_notes:
+        last_target_end_seconds = max(
+            float(getattr(note, "timestamp_seconds", 0.0)) + float(getattr(note, "duration_seconds", 0.0))
+            for note in normalized_target_notes
+        )
+        history_seconds = max(0.0, float(config.raw["gameplay"].get("note_history_ms", 0.0)) / 1000.0)
+        lead_in_seconds = max(0.0, float(pre_song_lead_in_ms) / 1000.0)
+        song_complete_at_monotonic = float(song_started_monotonic) + lead_in_seconds + last_target_end_seconds + history_seconds
     while running:
         for event in pygame_module.event.get():
             if event.type == pygame_module.QUIT:
                 LOGGER.info("Received pygame QUIT event. Exiting persistent liveview loop.")
-                running = False
-                break
+                return "quit", _final_score_state_or_none(gameplay_score_tracker)
             if event.type == pygame_module.KEYDOWN and event.key == pygame_module.K_ESCAPE:
                 LOGGER.info("Received ESC key input. Exiting persistent liveview loop.")
-                running = False
-                break
+                return "quit", _final_score_state_or_none(gameplay_score_tracker)
 
         if not running:
             continue
+
+        if song_audio_start is not None and (
+            song_audio_start_at_monotonic is None or time.monotonic() >= float(song_audio_start_at_monotonic)
+        ):
+            try:
+                song_audio_start()
+            except Exception as exc:
+                raise LiveviewRuntimeError(f"Failed to start scheduled song audio playback: {exc}") from exc
+            song_audio_start = None
 
         render_liveview_frame(
             window=window,
@@ -361,10 +440,15 @@ def run_persistent_liveview_loop(
             gesture_playback_controller=gesture_playback_controller,
             normalized_target_notes=normalized_target_notes,
             song_started_monotonic=song_started_monotonic,
+            pre_song_lead_in_ms=pre_song_lead_in_ms,
+            hit_window_judge=hit_window_judge,
+            gameplay_score_tracker=gameplay_score_tracker,
         )
+        if song_complete_at_monotonic is not None and time.monotonic() >= song_complete_at_monotonic:
+            LOGGER.info("Song timeline completed. Exiting gameplay loop for post-song transition.")
+            return "song_complete", _final_score_state_or_none(gameplay_score_tracker)
         clock.tick(target_fps)
-
-
+    return "quit", _final_score_state_or_none(gameplay_score_tracker)
 def _run_hand_roi_inference(
     *,
     hand_pose_model: Any,

@@ -1,31 +1,25 @@
 """YAML config loading and validation for midi_mover."""
-
 from __future__ import annotations
-
 from dataclasses import dataclass
 import ast
 from pathlib import Path
 from typing import Any
-
 try:
     import yaml  # type: ignore
 except ModuleNotFoundError:  # pragma: no cover - exercised in environments without PyYAML
     yaml = None
-
-
 class ConfigError(ValueError):
     """Raised when the YAML config is missing required data."""
-
 @dataclass(frozen=True)
 class AppConfig:
     raw: dict[str, Any]
-
-
 REQUIRED_PATHS: tuple[tuple[str, ...], ...] = (
     ("app", "name"),
     ("app", "window_width"),
     ("app", "window_height"),
     ("app", "target_fps"),
+    ("app", "song_title_screen_duration_seconds"),
+    ("app", "song_summary_screen_duration_seconds"),
     ("app", "debug"),
     ("app", "logging_level"),
     ("app", "random_seed"),
@@ -105,6 +99,7 @@ REQUIRED_PATHS: tuple[tuple[str, ...], ...] = (
     ("liveview", "wrist_marker_outline_width"),
     ("liveview", "padding_color"),
     ("gameplay", "hit_window_ms"),
+    ("gameplay", "pre_song_lead_in_ms"),
     ("gameplay", "early_late_tolerance_ms"),
     ("gameplay", "debounce_ms"),
     ("gameplay", "swap_hands_when_mirrored"),
@@ -125,6 +120,13 @@ REQUIRED_PATHS: tuple[tuple[str, ...], ...] = (
     ("audio", "mixer", "channels"),
     ("audio", "mixer", "buffer"),
     ("audio", "mixer", "max_channels"),
+    ("audio", "backend"),
+    ("audio", "fluidsynth", "soundfont_path"),
+    ("audio", "fluidsynth", "sample_rate"),
+    ("audio", "fluidsynth", "gain"),
+    ("audio", "fluidsynth", "polyphony"),
+    ("audio", "fluidsynth", "audio_driver"),
+    ("audio", "fluidsynth", "audio_buffer_size"),
     ("audio", "gesture_sounds"),
     ("audio", "volumes", "ui"),
     ("audio", "volumes", "hit"),
@@ -141,8 +143,6 @@ REQUIRED_PATHS: tuple[tuple[str, ...], ...] = (
     ("highscore", "thumbnail_width"),
     ("highscore", "thumbnail_height"),
 )
-
-
 def load_config(config_path: Path) -> AppConfig:
     """Load and validate the application YAML config."""
     raw_text = config_path.read_text(encoding="utf-8")
@@ -155,7 +155,6 @@ def load_config(config_path: Path) -> AppConfig:
             ) from exc
     else:
         payload = _load_simple_yaml(raw_text, config_path)
-
     if payload is None:
         raise ConfigError(
             f"Config file {config_path} is empty. Add the required startup keys."
@@ -164,25 +163,19 @@ def load_config(config_path: Path) -> AppConfig:
         raise ConfigError(
             f"Config file {config_path} must contain a top-level mapping/object."
         )
-
     _validate_required_paths(payload)
     _validate_value_types(payload)
     return AppConfig(raw=payload)
-
-
 def _validate_required_paths(payload: dict[str, Any]) -> None:
     missing = []
     for path in REQUIRED_PATHS:
         if not _has_path(payload, path):
             missing.append(".".join(path))
-
     if missing:
         joined = "\n - ".join([""] + missing)
         raise ConfigError(
             "Config is missing required keys:" + joined + "\nAdd them to the YAML file and retry startup."
         )
-
-
 def _has_path(payload: dict[str, Any], path: tuple[str, ...]) -> bool:
     current: Any = payload
     for segment in path:
@@ -190,20 +183,24 @@ def _has_path(payload: dict[str, Any], path: tuple[str, ...]) -> bool:
             return False
         current = current[segment]
     return True
-
-
 def _validate_value_types(payload: dict[str, Any]) -> None:
     _require_type(payload["app"]["window_width"], int, "app.window_width")
     _require_type(payload["app"]["window_height"], int, "app.window_height")
     _require_type(payload["app"]["target_fps"], int, "app.target_fps")
+    _require_numeric(
+        payload["app"]["song_title_screen_duration_seconds"],
+        "app.song_title_screen_duration_seconds",
+    )
+    _require_numeric(
+        payload["app"]["song_summary_screen_duration_seconds"],
+        "app.song_summary_screen_duration_seconds",
+    )
     _require_type(payload["app"]["debug"], bool, "app.debug")
     _require_type(payload["app"]["logging_level"], str, "app.logging_level")
     _require_optional_type(payload["app"]["random_seed"], int, "app.random_seed")
-
     _require_type(payload["camera"]["width"], int, "camera.width")
     _require_type(payload["camera"]["height"], int, "camera.height")
     _require_type(payload["camera"]["mirror"], bool, "camera.mirror")
-
     _require_non_empty_string(
         payload["pose"]["stage1_model_name"],
         "pose.stage1_model_name",
@@ -240,7 +237,6 @@ def _validate_value_types(payload: dict[str, Any]) -> None:
             "Config key pose.stage2_missing_fallback_mode must be either 'clear' or 'reuse_last'."
         )
     payload["pose"]["stage2_missing_fallback_mode"] = fallback_mode
-
     _require_numeric(payload["liveview"]["left_panel_ratio"], "liveview.left_panel_ratio")
     _require_numeric(payload["liveview"]["crop_smoothing_factor"], "liveview.crop_smoothing_factor")
     _require_numeric(payload["liveview"]["crop_max_jump_ratio"], "liveview.crop_max_jump_ratio")
@@ -305,8 +301,8 @@ def _validate_value_types(payload: dict[str, Any]) -> None:
     )
     _require_color_triplet(payload["liveview"]["padding_color"], "liveview.padding_color")
     _validate_circle_visuals(payload["liveview"]["circle_visuals"])
-
     _require_type(payload["gameplay"]["hit_window_ms"], int, "gameplay.hit_window_ms")
+    _require_type(payload["gameplay"]["pre_song_lead_in_ms"], int, "gameplay.pre_song_lead_in_ms")
     _require_type(
         payload["gameplay"]["early_late_tolerance_ms"],
         int,
@@ -322,7 +318,6 @@ def _validate_value_types(payload: dict[str, Any]) -> None:
     _require_type(payload["gameplay"]["lookahead_ms"], int, "gameplay.lookahead_ms")
     _require_numeric(payload["gameplay"]["timeline_now_line_ratio"], "gameplay.timeline_now_line_ratio")
     _require_type(payload["gameplay"]["score_values"], dict, "gameplay.score_values")
-
     _require_type(payload["midi"]["supported_extensions"], list, "midi.supported_extensions")
     _require_type(payload["midi"]["note_mapping"], dict, "midi.note_mapping")
     _require_type(payload["midi"]["track_filter"], list, "midi.track_filter")
@@ -334,6 +329,49 @@ def _validate_value_types(payload: dict[str, Any]) -> None:
     )
     _require_type(payload["midi"]["ignore_meta_events"], bool, "midi.ignore_meta_events")
     _require_type(payload["audio"]["mixer"], dict, "audio.mixer")
+    _require_non_empty_string(payload["audio"]["backend"], "audio.backend")
+    _require_type(payload["audio"]["fluidsynth"], dict, "audio.fluidsynth")
+    _require_type(
+        payload["audio"]["fluidsynth"]["soundfont_path"],
+        str,
+        "audio.fluidsynth.soundfont_path",
+    )
+    _require_type(
+        payload["audio"]["fluidsynth"]["sample_rate"],
+        int,
+        "audio.fluidsynth.sample_rate",
+    )
+    _require_numeric(payload["audio"]["fluidsynth"]["gain"], "audio.fluidsynth.gain")
+    _require_type(
+        payload["audio"]["fluidsynth"]["polyphony"],
+        int,
+        "audio.fluidsynth.polyphony",
+    )
+    _require_optional_type(
+        payload["audio"]["fluidsynth"]["audio_driver"],
+        str,
+        "audio.fluidsynth.audio_driver",
+    )
+    _require_type(
+        payload["audio"]["fluidsynth"]["audio_buffer_size"],
+        int,
+        "audio.fluidsynth.audio_buffer_size",
+    )
+    _require_optional_type(
+        payload["audio"]["fluidsynth"].get("instrument_profile"),
+        str,
+        "audio.fluidsynth.instrument_profile",
+    )
+    _require_type(
+        payload["audio"]["fluidsynth"].get("instrument_profiles", {}),
+        dict,
+        "audio.fluidsynth.instrument_profiles",
+    )
+    _require_type(
+        payload["audio"]["fluidsynth"].get("channel_instruments", {}),
+        dict,
+        "audio.fluidsynth.channel_instruments",
+    )
     _require_type(payload["audio"]["gesture_sounds"], dict, "audio.gesture_sounds")
     _require_type(payload["audio"]["volumes"], dict, "audio.volumes")
     _require_type(payload["audio"]["playback"], dict, "audio.playback")
@@ -345,7 +383,6 @@ def _validate_value_types(payload: dict[str, Any]) -> None:
     _require_type(payload["audio"]["playback"]["sustain_while_inside"], bool, "audio.playback.sustain_while_inside")
     _require_type(payload["audio"]["playback"]["release_fade_ms"], int, "audio.playback.release_fade_ms")
     _validate_gesture_sounds(payload["audio"]["gesture_sounds"])
-
     _require_type(payload["highscore"]["list_size"], int, "highscore.list_size")
     _require_numeric(
         payload["highscore"]["headshot_countdown_seconds"],
@@ -357,53 +394,39 @@ def _validate_value_types(payload: dict[str, Any]) -> None:
     )
     _require_type(payload["highscore"]["thumbnail_width"], int, "highscore.thumbnail_width")
     _require_type(payload["highscore"]["thumbnail_height"], int, "highscore.thumbnail_height")
-
     circle_offsets_percent = {
         _normalize_mapping_key(key): value
         for key, value in payload["liveview"]["circle_offsets_percent"].items()
     }
     payload["liveview"]["circle_offsets_percent"] = circle_offsets_percent
-
     if sorted(circle_offsets_percent.keys()) != ["1", "2", "3", "4", "5"]:
         raise ConfigError(
             "liveview.circle_offsets_percent must define exactly the string keys '1' through '5'."
         )
     for key, offset in circle_offsets_percent.items():
         _require_vector2(offset, f"liveview.circle_offsets_percent.{key}")
-
-
 def _require_type(value: Any, expected_type: type, name: str) -> None:
     if not isinstance(value, expected_type):
         raise ConfigError(
             f"Config key {name} must be of type {expected_type.__name__}, got {type(value).__name__}."
         )
-
-
 def _require_non_empty_string(value: Any, name: str) -> None:
     _require_type(value, str, name)
     if not value.strip():
         raise ConfigError(f"Config key {name} must be a non-empty string.")
-
-
 def _require_optional_type(value: Any, expected_type: type, name: str) -> None:
     if value is not None and not isinstance(value, expected_type):
         raise ConfigError(
             f"Config key {name} must be null or {expected_type.__name__}, got {type(value).__name__}."
         )
-
-
 def _require_numeric(value: Any, name: str) -> None:
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         raise ConfigError(f"Config key {name} must be numeric, got {type(value).__name__}.")
-
-
 def _require_vector2(value: Any, name: str) -> None:
     if not isinstance(value, list) or len(value) != 2:
         raise ConfigError(f"Config key {name} must be a 2-item list [x, y].")
     for index, item in enumerate(value):
         _require_numeric(item, f"{name}[{index}]")
-
-
 def _require_color_triplet(value: Any, name: str) -> None:
     if not isinstance(value, list) or len(value) != 3:
         raise ConfigError(f"Config key {name} must be an RGB triplet like [0, 0, 0].")
@@ -411,8 +434,6 @@ def _require_color_triplet(value: Any, name: str) -> None:
         _require_type(item, int, f"{name}[{index}]")
         if not 0 <= item <= 255:
             raise ConfigError(f"Config key {name}[{index}] must be between 0 and 255.")
-
-
 def _validate_keypoint_style(
     style_payload: Any,
     path: str,
@@ -426,10 +447,8 @@ def _validate_keypoint_style(
     _require_type(style_payload["keypoint_outline_width"], int, f"{path}.keypoint_outline_width")
     _require_color_triplet(style_payload["skeleton_color"], f"{path}.skeleton_color")
     _require_type(style_payload["skeleton_width"], int, f"{path}.skeleton_width")
-
     if not include_fingertips:
         return
-
     _require_type(style_payload["emphasize_fingertips"], bool, f"{path}.emphasize_fingertips")
     _require_color_triplet(style_payload["fingertip_color"], f"{path}.fingertip_color")
     _require_type(style_payload["fingertip_radius"], int, f"{path}.fingertip_radius")
@@ -438,8 +457,6 @@ def _validate_keypoint_style(
         f"{path}.fingertip_outline_color",
     )
     _require_type(style_payload["fingertip_outline_width"], int, f"{path}.fingertip_outline_width")
-
-
 def _validate_overlay_legend_style(style_payload: Any, path: str) -> None:
     _require_type(style_payload, dict, path)
     _require_type(style_payload["font_size"], int, f"{path}.font_size")
@@ -450,8 +467,6 @@ def _validate_overlay_legend_style(style_payload: Any, path: str) -> None:
     _require_type(style_payload["border_width"], int, f"{path}.border_width")
     _require_type(style_payload["panel_padding"], int, f"{path}.panel_padding")
     _require_type(style_payload["line_spacing"], int, f"{path}.line_spacing")
-
-
 def _validate_circle_visuals(circle_visuals: dict[str, Any]) -> None:
     state_names = ("idle", "active_contact", "hit_flash", "miss_flash")
     for state_name in state_names:
@@ -473,7 +488,6 @@ def _validate_circle_visuals(circle_visuals: dict[str, Any]) -> None:
             state_payload["label_color"],
             f"liveview.circle_visuals.{state_name}.label_color",
         )
-
     _require_type(
         circle_visuals["hit_flash_duration_ms"],
         int,
@@ -484,20 +498,16 @@ def _validate_circle_visuals(circle_visuals: dict[str, Any]) -> None:
         int,
         "liveview.circle_visuals.miss_flash_duration_ms",
     )
-
-
 def _validate_gesture_sounds(gesture_sounds: dict[str, Any]) -> None:
     required_tokens = ("L1", "L2", "L3", "L4", "L5", "R1", "R2", "R3", "R4", "R5")
     normalized = {_normalize_mapping_key(key): value for key, value in gesture_sounds.items()}
     gesture_sounds.clear()
     gesture_sounds.update(normalized)
-
     if sorted(normalized.keys()) != sorted(required_tokens):
         raise ConfigError(
             "audio.gesture_sounds must define exactly the gesture tokens "
             "L1, L2, L3, L4, L5, R1, R2, R3, R4, and R5."
         )
-
     for token in required_tokens:
         spec = normalized[token]
         _require_type(spec, dict, f"audio.gesture_sounds.{token}")
@@ -509,11 +519,8 @@ def _validate_gesture_sounds(gesture_sounds: dict[str, Any]) -> None:
             raise ConfigError(f"Config key audio.gesture_sounds.{token}.waveform is required.")
         _require_numeric(spec["frequency_hz"], f"audio.gesture_sounds.{token}.frequency_hz")
         _require_type(spec["waveform"], str, f"audio.gesture_sounds.{token}.waveform")
-
-
 def _load_simple_yaml(raw_text: str, config_path: Path) -> dict[str, Any]:
     """Parse a minimal YAML subset when PyYAML is unavailable.
-
     Supported features:
     - nested mappings by indentation
     - scalar values: strings, ints, floats, bools, null
@@ -521,33 +528,27 @@ def _load_simple_yaml(raw_text: str, config_path: Path) -> dict[str, Any]:
     """
     root: dict[str, Any] = {}
     stack: list[tuple[int, dict[str, Any]]] = [(-1, root)]
-
     for line_number, raw_line in enumerate(raw_text.splitlines(), start=1):
         line = raw_line.split("#", 1)[0].rstrip()
         if not line.strip():
             continue
-
         indent = len(line) - len(line.lstrip(" "))
         if indent % 2 != 0:
             raise ConfigError(
                 f"Failed to parse YAML config at {config_path}: line {line_number} uses unsupported indentation."
             )
-
         stripped = line.strip()
         if stripped.startswith("- "):
             raise ConfigError(
                 f"Failed to parse YAML config at {config_path}: block list syntax is unsupported by the built-in YAML fallback on line {line_number}."
             )
-
         key, sep, value = stripped.partition(":")
         if not sep:
             raise ConfigError(
                 f"Failed to parse YAML config at {config_path}: expected 'key: value' on line {line_number}."
             )
-
         while len(stack) > 1 and indent <= stack[-1][0]:
             stack.pop()
-
         current = stack[-1][1]
         key = key.strip()
         value = value.strip()
@@ -555,17 +556,13 @@ def _load_simple_yaml(raw_text: str, config_path: Path) -> dict[str, Any]:
             raise ConfigError(
                 f"Failed to parse YAML config at {config_path}: empty key on line {line_number}."
             )
-
         if value == "":
             child: dict[str, Any] = {}
             current[key] = child
             stack.append((indent, child))
         else:
             current[key] = _parse_scalar(value)
-
     return root
-
-
 def _parse_scalar(value: str) -> Any:
     lowered = value.lower()
     if lowered == "true":
@@ -574,31 +571,24 @@ def _parse_scalar(value: str) -> Any:
         return False
     if lowered in {"null", "none"}:
         return None
-
     if value.startswith("[") and value.endswith("]"):
         inner = value[1:-1].strip()
         if not inner:
             return []
         return [_parse_scalar(part.strip()) for part in inner.split(",")]
-
     if (value.startswith('"') and value.endswith('"')) or (
         value.startswith("'") and value.endswith("'")
     ):
         return ast.literal_eval(value)
-
     try:
         return int(value)
     except ValueError:
         pass
-
     try:
         return float(value)
     except ValueError:
         pass
-
     return value
-
-
 def _normalize_mapping_key(key: Any) -> str:
     text = str(key)
     if (text.startswith('"') and text.endswith('"')) or (
