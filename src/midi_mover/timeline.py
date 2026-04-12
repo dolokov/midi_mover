@@ -49,6 +49,7 @@ def compute_timeline_panel_layout(
     pygame_module: Any,
     window_width: int,
     window_height: int,
+    now_line_ratio: float = 0.25,
 ) -> TimelinePanelLayout:
     """Compute fixed 40%-width right panel and split it into five lanes."""
 
@@ -75,7 +76,8 @@ def compute_timeline_panel_layout(
         )
         cursor_x += current_lane_width
 
-    now_line_y = panel_rect.y + int(round(panel_rect.height * 0.25))
+    safe_now_line_ratio = max(0.0, min(1.0, float(now_line_ratio)))
+    now_line_y = panel_rect.y + int(round(panel_rect.height * safe_now_line_ratio))
     return TimelinePanelLayout(
         panel_rect=panel_rect,
         lanes=tuple(lane_rects),

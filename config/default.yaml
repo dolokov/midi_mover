@@ -92,11 +92,11 @@ liveview:
       fingertip_outline_width: 2
   circle_radius_percent: 5.83
   circle_offsets_percent:
-    "1": [-36.0, -2.0]
-    "2": [-18.0, -21.0]
-    "3": [0.0, -29.0]
-    "4": [18.0, -21.0]
-    "5": [36.0, -2.0]
+    "1": [-36.0, -25.0]
+    "2": [-18.0, -30.0]
+    "3": [0.0, -40.0]
+    "4": [18.0, -30.0]
+    "5": [36.0, -25.0]
   circle_stroke_width: 4
   label_font_size: 24
   wrist_marker_radius: 10
@@ -107,8 +107,10 @@ gameplay:
   hit_window_ms: 120
   early_late_tolerance_ms: 180
   debounce_ms: 90
+  swap_hands_when_mirrored: true
   note_history_ms: 1500
   lookahead_ms: 2500
+  timeline_now_line_ratio: 0.75
   score_values:
     hit: 100
     miss: -25

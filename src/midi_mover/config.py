@@ -107,8 +107,10 @@ REQUIRED_PATHS: tuple[tuple[str, ...], ...] = (
     ("gameplay", "hit_window_ms"),
     ("gameplay", "early_late_tolerance_ms"),
     ("gameplay", "debounce_ms"),
+    ("gameplay", "swap_hands_when_mirrored"),
     ("gameplay", "note_history_ms"),
     ("gameplay", "lookahead_ms"),
+    ("gameplay", "timeline_now_line_ratio"),
     ("gameplay", "score_values", "hit"),
     ("gameplay", "score_values", "miss"),
     ("gameplay", "score_values", "combo_bonus"),
@@ -311,8 +313,14 @@ def _validate_value_types(payload: dict[str, Any]) -> None:
         "gameplay.early_late_tolerance_ms",
     )
     _require_type(payload["gameplay"]["debounce_ms"], int, "gameplay.debounce_ms")
+    _require_type(
+        payload["gameplay"]["swap_hands_when_mirrored"],
+        bool,
+        "gameplay.swap_hands_when_mirrored",
+    )
     _require_type(payload["gameplay"]["note_history_ms"], int, "gameplay.note_history_ms")
     _require_type(payload["gameplay"]["lookahead_ms"], int, "gameplay.lookahead_ms")
+    _require_numeric(payload["gameplay"]["timeline_now_line_ratio"], "gameplay.timeline_now_line_ratio")
     _require_type(payload["gameplay"]["score_values"], dict, "gameplay.score_values")
 
     _require_type(payload["midi"]["supported_extensions"], list, "midi.supported_extensions")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import logging
 import time
 from typing import Any
@@ -47,6 +48,24 @@ class LiveviewRuntimeError(RuntimeError):
     """Raised when the persistent liveview runtime cannot continue safely."""
 
 
+def resolve_frame_hand_swap(*, frame_mirrored: bool, config: Any) -> bool:
+    """Resolve whether handedness should be swapped for this mirrored frame."""
+
+    return bool(frame_mirrored) and bool(config.raw["gameplay"].get("swap_hands_when_mirrored", False))
+
+
+def resolve_overlay_gameplay_keypoints(*, gameplay_keypoints: Any, swap_hands: bool) -> Any:
+    """Return gameplay keypoints adjusted for overlay wrist labeling when swapping is active."""
+
+    if gameplay_keypoints is None or not swap_hands:
+        return gameplay_keypoints
+    return replace(
+        gameplay_keypoints,
+        left_wrist=getattr(gameplay_keypoints, "right_wrist", None),
+        right_wrist=getattr(gameplay_keypoints, "left_wrist", None),
+    )
+
+
 def load_circle_visual_styles(config: Any) -> dict[str, CircleVisualStyle]:
     visuals = config.raw["liveview"]["circle_visuals"]
     return {
@@ -89,6 +108,7 @@ def render_liveview_frame(
         pygame_module=pygame_module,
         window_width=window.get_width(),
         window_height=window.get_height(),
+        now_line_ratio=float(config.raw["gameplay"]["timeline_now_line_ratio"]),
     )
 
     try:
@@ -131,10 +151,24 @@ def render_liveview_frame(
         circle_radius_percent=float(config.raw["liveview"]["circle_radius_percent"]),
         scale_width_multiplier=float(config.raw["liveview"]["eye_crop_width_multiplier"]),
     )
+    resolved_swap_hands = resolve_frame_hand_swap(
+        frame_mirrored=bool(frame.mirrored),
+        config=config,
+    )
     interaction_snapshot = detect_hand_circle_interactions(
         circle_geometries=circle_geometries,
         gameplay_keypoints=gameplay_keypoints,
-        swap_hands=frame.mirrored,
+        swap_hands=resolved_swap_hands,
+    )
+    overlay_gameplay_keypoints = resolve_overlay_gameplay_keypoints(
+        gameplay_keypoints=gameplay_keypoints,
+        swap_hands=resolved_swap_hands,
+    )
+    LOGGER.debug(
+        "Handedness resolution: mirrored=%s swap_hands_when_mirrored=%s resolved_swap=%s.",
+        bool(frame.mirrored),
+        bool(config.raw["gameplay"].get("swap_hands_when_mirrored", False)),
+        resolved_swap_hands,
     )
     transition_snapshot = interaction_transition_tracker.update(interaction_snapshot)
     if gesture_sounds is not None and gesture_playback_controller is not None:
@@ -206,7 +240,7 @@ def render_liveview_frame(
         target_width=layout.scaled_width,
         target_height=layout.scaled_height,
         selection=selection,
-        gameplay_keypoints=gameplay_keypoints,
+        gameplay_keypoints=overlay_gameplay_keypoints,
         circle_geometries=circle_geometries,
         circle_visual_states=circle_visual_states,
         circle_visual_styles=circle_visual_styles,
