@@ -8,7 +8,9 @@ import logging
 from array import array
 from typing import Any
 
+from midi_mover.audio_levels import resolve_unified_audio_levels
 from midi_mover.interaction_visuals import InteractionTransitionSnapshot
+from midi_mover.song_audio import resolve_shared_fluidsynth_cue_instrument
 
 
 LOGGER = logging.getLogger("midi_mover")
@@ -158,6 +160,145 @@ class GesturePlaybackController:
         if started_tokens:
             LOGGER.debug("Started sustained gesture sounds for active tokens: %s.", ", ".join(started_tokens))
         return tuple(started_tokens)
+
+
+@dataclass(frozen=True)
+class FluidSynthImmediateCueConfig:
+    """Config for FluidSynth-based immediate hand-in-circle cues."""
+
+    enabled: bool
+    channel: int
+    velocity: int
+    sustain_while_inside: bool
+    bank: int
+    program: int
+    token_notes: dict[str, int]
+
+
+class FluidSynthGesturePlaybackController:
+    """Drive immediate cue notes directly through FluidSynth while hands stay inside circles."""
+
+    def __init__(
+        self,
+        *,
+        synth: Any,
+        cue_config: FluidSynthImmediateCueConfig,
+        soundfont_id: int | None = None,
+    ) -> None:
+        self._synth = synth
+        self._cue_config = cue_config
+        self._soundfont_id = soundfont_id
+        self._active_notes_by_token: dict[str, int] = {}
+        self._apply_instrument_preset()
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self._cue_config.enabled)
+
+    @classmethod
+    def from_audio_config(
+        cls,
+        *,
+        synth: Any,
+        audio_config: dict[str, Any],
+        soundfont_id: int | None = None,
+    ) -> "FluidSynthGesturePlaybackController":
+        cue_config = _load_fluidsynth_immediate_cue_config(audio_config)
+        return cls(synth=synth, cue_config=cue_config, soundfont_id=soundfont_id)
+
+    def reset(self, *, fade_ms: int = 0) -> None:  # noqa: ARG002 - parity with pygame controller API
+        for token, note in list(self._active_notes_by_token.items()):
+            self._note_off(note)
+            self._active_notes_by_token.pop(token, None)
+
+    def update(
+        self,
+        *,
+        pygame_module: Any,
+        transition_snapshot: InteractionTransitionSnapshot,
+        gesture_sounds: LoadedGestureSounds,
+    ) -> tuple[str, ...]:
+        del pygame_module, gesture_sounds
+        if not self._cue_config.enabled:
+            return ()
+
+        active_now: set[str] = set()
+        started_tokens: list[str] = []
+        if self._cue_config.sustain_while_inside:
+            for hand_state in (transition_snapshot.left_hand, transition_snapshot.right_hand):
+                for lane_state in hand_state.lane_states:
+                    if lane_state.is_inside:
+                        active_now.add(lane_state.token)
+        else:
+            for hand_state in (transition_snapshot.left_hand, transition_snapshot.right_hand):
+                for lane_state in hand_state.lane_states:
+                    if lane_state.state_name == "enter":
+                        active_now.add(lane_state.token)
+
+        for token in sorted(active_now):
+            if token in self._active_notes_by_token:
+                continue
+            note = int(self._cue_config.token_notes[token])
+            self._note_on(note)
+            self._active_notes_by_token[token] = note
+            started_tokens.append(token)
+
+        for token in [token for token in self._active_notes_by_token if token not in active_now]:
+            self._note_off(self._active_notes_by_token[token])
+            self._active_notes_by_token.pop(token, None)
+
+        return tuple(started_tokens)
+
+    def _apply_instrument_preset(self) -> None:
+        if not self._cue_config.enabled:
+            return
+        program_select = getattr(self._synth, "program_select", None)
+        if callable(program_select) and self._soundfont_id is not None:
+            try:
+                result = int(
+                    program_select(
+                        int(self._cue_config.channel),
+                        int(self._soundfont_id),
+                        int(self._cue_config.bank),
+                        int(self._cue_config.program),
+                    )
+                )
+                if result != 0:
+                    LOGGER.warning(
+                        "FluidSynth immediate cue program_select returned non-zero result=%s for channel=%s bank=%s program=%s.",
+                        result,
+                        self._cue_config.channel,
+                        self._cue_config.bank,
+                        self._cue_config.program,
+                    )
+            except Exception:
+                LOGGER.exception("Failed to apply FluidSynth immediate cue program_select preset.")
+            return
+
+        program_change = getattr(self._synth, "program_change", None)
+        if callable(program_change):
+            try:
+                program_change(int(self._cue_config.channel), int(self._cue_config.program))
+            except Exception:
+                LOGGER.exception("Failed to apply FluidSynth immediate cue program_change preset.")
+
+    def _note_on(self, note: int) -> None:
+        noteon = getattr(self._synth, "noteon", None)
+        if not callable(noteon):
+            return
+        try:
+            noteon(int(self._cue_config.channel), int(note), int(self._cue_config.velocity))
+        except Exception:
+            LOGGER.exception("Failed to trigger FluidSynth immediate cue noteon for note=%s.", note)
+
+    def _note_off(self, note: int) -> None:
+        noteoff = getattr(self._synth, "noteoff", None)
+        if not callable(noteoff):
+            return
+        try:
+            noteoff(int(self._cue_config.channel), int(note))
+        except Exception:
+            LOGGER.exception("Failed to trigger FluidSynth immediate cue noteoff for note=%s.", note)
 
 
 def initialize_audio_output(*, pygame_module: Any, audio_config: dict[str, Any]) -> AudioStartupStatus:
@@ -345,9 +486,10 @@ def _load_playback_config(audio_config: dict[str, Any]) -> AudioPlaybackConfig:
     playback = audio_config.get("playback")
     if not isinstance(playback, dict):
         raise AudioStartupError("Audio config must define audio.playback as a mapping.")
+    levels = resolve_unified_audio_levels(audio_config)
     return AudioPlaybackConfig(
         note_duration_seconds=max(0.01, float(playback["note_duration_seconds"])),
-        gesture_volume=max(0.0, min(float(playback["gesture_volume"]), 1.0)),
+        gesture_volume=max(0.0, min(float(playback["gesture_volume"]), 1.0)) * float(levels.cue),
         max_concurrent_sounds=max(1, int(playback["max_concurrent_sounds"])),
         restart_busy_channel=bool(playback["restart_busy_channel"]),
         sustain_while_inside=bool(playback["sustain_while_inside"]),
@@ -382,3 +524,51 @@ def _build_tone_sound(
         for _ in range(channels):
             interleaved.append(sample)
     return pygame_module.mixer.Sound(buffer=interleaved.tobytes())
+
+
+def _load_fluidsynth_immediate_cue_config(audio_config: dict[str, Any]) -> FluidSynthImmediateCueConfig:
+    immediate_cues = audio_config.get("immediate_cues")
+    immediate_cues_payload = immediate_cues if isinstance(immediate_cues, dict) else {}
+    fluidsynth_payload = immediate_cues_payload.get("fluidsynth")
+    fluidsynth_cfg = fluidsynth_payload if isinstance(fluidsynth_payload, dict) else {}
+
+    default_token_notes: dict[str, int] = {
+        "L1": 48,
+        "L2": 50,
+        "L3": 52,
+        "L4": 55,
+        "L5": 57,
+        "R1": 60,
+        "R2": 62,
+        "R3": 64,
+        "R4": 67,
+        "R5": 69,
+    }
+    configured_token_notes = fluidsynth_cfg.get("token_notes")
+    raw_token_notes = configured_token_notes if isinstance(configured_token_notes, dict) else {}
+    token_notes = {**default_token_notes}
+    for token, raw_note in raw_token_notes.items():
+        token_text = str(token).strip().upper()
+        if token_text not in token_notes:
+            continue
+        try:
+            normalized_note = int(raw_note)
+        except (TypeError, ValueError):
+            continue
+        token_notes[token_text] = max(0, min(127, normalized_note))
+
+    levels = resolve_unified_audio_levels(audio_config)
+    base_velocity = max(1, min(127, int(fluidsynth_cfg.get("velocity", 96))))
+    scaled_velocity = max(1, min(127, int(round(base_velocity * float(levels.cue)))))
+    enabled = bool(fluidsynth_cfg.get("enabled", True)) and float(levels.cue) > 0.0
+    shared_bank, shared_program = resolve_shared_fluidsynth_cue_instrument(audio_config=audio_config)
+
+    return FluidSynthImmediateCueConfig(
+        enabled=enabled,
+        channel=max(0, min(15, int(fluidsynth_cfg.get("channel", 15)))),
+        velocity=scaled_velocity,
+        sustain_while_inside=bool(fluidsynth_cfg.get("sustain_while_inside", True)),
+        bank=int(shared_bank),
+        program=int(shared_program),
+        token_notes=token_notes,
+    )

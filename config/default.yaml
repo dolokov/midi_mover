@@ -16,7 +16,7 @@ camera:
 
 pose:
   stage1_model_name: yolo11n-pose.pt
-  stage2_hand_model_name: /home/alex/data/midi_mover/handcheckpoints/hand_26n_img640_20260411_214709/weights/best.pt
+  stage2_hand_model_name: /home/alex/data/midi_mover/handcheckpoints/hand_26n_img640_aug_rotate_20260413_063312/weights/best.pt
   stage2_roi_expansion_px: 30
   confidence_threshold: 0.5
   iou_threshold: 0.45
@@ -144,15 +144,15 @@ midi:
     creative_cycle_span: 8
 
 audio:
-  backend: pygame
+  backend: pyfluidsynth
   fluidsynth:
-    soundfont_path: ""
+    soundfont_path: "/home/alex/data/midi_mover/assets/soundfonts/jnsgm2/Jnsgm2.sf2"
     sample_rate: 44100
     gain: 0.5
     polyphony: 256
     audio_driver: null
     audio_buffer_size: 64
-    instrument_profile: null
+    instrument_profile: synth_lead #null
     reverb:
       enabled: true
       room_size: 0.35
@@ -235,11 +235,27 @@ audio:
       frequency_hz: 783.99
       waveform: sine
   volumes:
+    master: 1.0
+    song: 0.0 #1.0
     ui: 0.7
     hit: 0.8
-    cue: 0.0 #0.8
   immediate_cues:
-    routing: mixed_pygame
+    fluidsynth:
+      enabled: true
+      channel: 15
+      velocity: 96
+      sustain_while_inside: true
+      token_notes:
+        L1: 48
+        L2: 50
+        L3: 52
+        L4: 55
+        L5: 57
+        R1: 60
+        R2: 62
+        R3: 64
+        R4: 67
+        R5: 69
   playback:
     note_duration_seconds: 0.18
     gesture_volume: 0.8

@@ -1,9 +1,10 @@
 """YAML config loading and validation for midi_mover."""
 from __future__ import annotations
 from dataclasses import dataclass
-import ast
 from pathlib import Path
 from typing import Any
+
+from midi_mover.simple_yaml import load_simple_yaml
 try:
     import yaml  # type: ignore
 except ModuleNotFoundError:  # pragma: no cover - exercised in environments without PyYAML
@@ -128,15 +129,21 @@ REQUIRED_PATHS: tuple[tuple[str, ...], ...] = (
     ("audio", "fluidsynth", "audio_driver"),
     ("audio", "fluidsynth", "audio_buffer_size"),
     ("audio", "gesture_sounds"),
+    ("audio", "volumes", "master"),
+    ("audio", "volumes", "song"),
     ("audio", "volumes", "ui"),
     ("audio", "volumes", "hit"),
-    ("audio", "volumes", "cue"),
     ("audio", "playback", "note_duration_seconds"),
     ("audio", "playback", "gesture_volume"),
     ("audio", "playback", "max_concurrent_sounds"),
     ("audio", "playback", "restart_busy_channel"),
     ("audio", "playback", "sustain_while_inside"),
     ("audio", "playback", "release_fade_ms"),
+    ("audio", "immediate_cues", "fluidsynth", "enabled"),
+    ("audio", "immediate_cues", "fluidsynth", "channel"),
+    ("audio", "immediate_cues", "fluidsynth", "velocity"),
+    ("audio", "immediate_cues", "fluidsynth", "sustain_while_inside"),
+    ("audio", "immediate_cues", "fluidsynth", "token_notes"),
     ("highscore", "list_size"),
     ("highscore", "headshot_countdown_seconds"), ("highscore", "leaderboard_screen_duration_seconds"), ("highscore", "headshot_crop_margin"),
     ("highscore", "thumbnail_width"),
@@ -153,7 +160,10 @@ def load_config(config_path: Path) -> AppConfig:
                 f"Failed to parse YAML config at {config_path}: {exc}"
             ) from exc
     else:
-        payload = _load_simple_yaml(raw_text, config_path)
+        try:
+            payload = load_simple_yaml(raw_text, config_path)
+        except ValueError as exc:
+            raise ConfigError(str(exc)) from exc
     if payload is None:
         raise ConfigError(
             f"Config file {config_path} is empty. Add the required startup keys."
@@ -373,6 +383,10 @@ def _validate_value_types(payload: dict[str, Any]) -> None:
     )
     _require_type(payload["audio"]["gesture_sounds"], dict, "audio.gesture_sounds")
     _require_type(payload["audio"]["volumes"], dict, "audio.volumes")
+    _require_numeric(payload["audio"]["volumes"]["master"], "audio.volumes.master")
+    _require_numeric(payload["audio"]["volumes"]["song"], "audio.volumes.song")
+    _require_numeric(payload["audio"]["volumes"]["ui"], "audio.volumes.ui")
+    _require_numeric(payload["audio"]["volumes"]["hit"], "audio.volumes.hit")
     _require_type(payload["audio"]["playback"], dict, "audio.playback")
     _require_type(payload["audio"]["mixer"]["max_channels"], int, "audio.mixer.max_channels")
     _require_numeric(payload["audio"]["playback"]["note_duration_seconds"], "audio.playback.note_duration_seconds")
@@ -381,6 +395,36 @@ def _validate_value_types(payload: dict[str, Any]) -> None:
     _require_type(payload["audio"]["playback"]["restart_busy_channel"], bool, "audio.playback.restart_busy_channel")
     _require_type(payload["audio"]["playback"]["sustain_while_inside"], bool, "audio.playback.sustain_while_inside")
     _require_type(payload["audio"]["playback"]["release_fade_ms"], int, "audio.playback.release_fade_ms")
+    _require_type(payload["audio"]["immediate_cues"], dict, "audio.immediate_cues")
+    _require_type(payload["audio"]["immediate_cues"]["fluidsynth"], dict, "audio.immediate_cues.fluidsynth")
+    _require_type(
+        payload["audio"]["immediate_cues"]["fluidsynth"]["enabled"],
+        bool,
+        "audio.immediate_cues.fluidsynth.enabled",
+    )
+    _require_type(
+        payload["audio"]["immediate_cues"]["fluidsynth"]["channel"],
+        int,
+        "audio.immediate_cues.fluidsynth.channel",
+    )
+    _require_type(
+        payload["audio"]["immediate_cues"]["fluidsynth"]["velocity"],
+        int,
+        "audio.immediate_cues.fluidsynth.velocity",
+    )
+    _require_type(
+        payload["audio"]["immediate_cues"]["fluidsynth"]["sustain_while_inside"],
+        bool,
+        "audio.immediate_cues.fluidsynth.sustain_while_inside",
+    )
+    _require_type(
+        payload["audio"]["immediate_cues"]["fluidsynth"]["token_notes"],
+        dict,
+        "audio.immediate_cues.fluidsynth.token_notes",
+    )
+    _validate_fluidsynth_immediate_cue_token_notes(
+        payload["audio"]["immediate_cues"]["fluidsynth"]["token_notes"]
+    )
     _validate_gesture_sounds(payload["audio"]["gesture_sounds"])
     _require_type(payload["highscore"]["list_size"], int, "highscore.list_size")
     _require_numeric(payload["highscore"]["headshot_countdown_seconds"], "highscore.headshot_countdown_seconds")
@@ -513,76 +557,27 @@ def _validate_gesture_sounds(gesture_sounds: dict[str, Any]) -> None:
             raise ConfigError(f"Config key audio.gesture_sounds.{token}.waveform is required.")
         _require_numeric(spec["frequency_hz"], f"audio.gesture_sounds.{token}.frequency_hz")
         _require_type(spec["waveform"], str, f"audio.gesture_sounds.{token}.waveform")
-def _load_simple_yaml(raw_text: str, config_path: Path) -> dict[str, Any]:
-    """Parse a minimal YAML subset when PyYAML is unavailable.
-    Supported features:
-    - nested mappings by indentation
-    - scalar values: strings, ints, floats, bools, null
-    - inline lists like [1, 2] or [".mid", ".midi"]
-    """
-    root: dict[str, Any] = {}
-    stack: list[tuple[int, dict[str, Any]]] = [(-1, root)]
-    for line_number, raw_line in enumerate(raw_text.splitlines(), start=1):
-        line = raw_line.split("#", 1)[0].rstrip()
-        if not line.strip():
-            continue
-        indent = len(line) - len(line.lstrip(" "))
-        if indent % 2 != 0:
+
+
+def _validate_fluidsynth_immediate_cue_token_notes(token_notes: dict[str, Any]) -> None:
+    required_tokens = ("L1", "L2", "L3", "L4", "L5", "R1", "R2", "R3", "R4", "R5")
+    normalized = {_normalize_mapping_key(key): value for key, value in token_notes.items()}
+    token_notes.clear()
+    token_notes.update(normalized)
+    if sorted(normalized.keys()) != sorted(required_tokens):
+        raise ConfigError(
+            "audio.immediate_cues.fluidsynth.token_notes must define exactly the gesture tokens "
+            "L1, L2, L3, L4, L5, R1, R2, R3, R4, and R5."
+        )
+    for token in required_tokens:
+        note_number = normalized[token]
+        _require_type(note_number, int, f"audio.immediate_cues.fluidsynth.token_notes.{token}")
+        if not 0 <= int(note_number) <= 127:
             raise ConfigError(
-                f"Failed to parse YAML config at {config_path}: line {line_number} uses unsupported indentation."
+                f"Config key audio.immediate_cues.fluidsynth.token_notes.{token} must be between 0 and 127."
             )
-        stripped = line.strip()
-        if stripped.startswith("- "):
-            raise ConfigError(
-                f"Failed to parse YAML config at {config_path}: block list syntax is unsupported by the built-in YAML fallback on line {line_number}."
-            )
-        key, sep, value = stripped.partition(":")
-        if not sep:
-            raise ConfigError(
-                f"Failed to parse YAML config at {config_path}: expected 'key: value' on line {line_number}."
-            )
-        while len(stack) > 1 and indent <= stack[-1][0]:
-            stack.pop()
-        current = stack[-1][1]
-        key = key.strip()
-        value = value.strip()
-        if not key:
-            raise ConfigError(
-                f"Failed to parse YAML config at {config_path}: empty key on line {line_number}."
-            )
-        if value == "":
-            child: dict[str, Any] = {}
-            current[key] = child
-            stack.append((indent, child))
-        else:
-            current[key] = _parse_scalar(value)
-    return root
-def _parse_scalar(value: str) -> Any:
-    lowered = value.lower()
-    if lowered == "true":
-        return True
-    if lowered == "false":
-        return False
-    if lowered in {"null", "none"}:
-        return None
-    if value.startswith("[") and value.endswith("]"):
-        inner = value[1:-1].strip()
-        if not inner:
-            return []
-        return [_parse_scalar(part.strip()) for part in inner.split(",")]
-    if (value.startswith('"') and value.endswith('"')) or (
-        value.startswith("'") and value.endswith("'")
-    ):
-        return ast.literal_eval(value)
-    try:
-        return int(value)
-    except ValueError:
-        pass
-    try:
-        return float(value)
-    except ValueError:
-        pass
-    return value
+
+
 def _normalize_mapping_key(key: Any) -> str:
     text = str(key)
     if (text.startswith('"') and text.endswith('"')) or (

@@ -8,7 +8,14 @@ from typing import Any
 from midi_mover.camera import CameraFrameReader
 from midi_mover.cli import StartupOptions, parse_args
 from midi_mover.config import AppConfig, ConfigError, load_config
-from midi_mover.audio import AudioStartupError, GesturePlaybackController, LoadedGestureSounds, build_gesture_sounds, initialize_audio_output
+from midi_mover.audio import (
+    AudioStartupError,
+    FluidSynthGesturePlaybackController,
+    GesturePlaybackController,
+    LoadedGestureSounds,
+    build_gesture_sounds,
+    initialize_audio_output,
+)
 from midi_mover.audio_integration_checks import verify_fluidsynth_profile_effect_settings
 from midi_mover.highscore_integration_checks import (
     verify_headshot_crop_margin_behavior,
@@ -433,6 +440,18 @@ def run_interactive_runtime(
         song_audio_backend = create_song_audio_backend(audio_config=config.raw["audio"], pygame_module=resources.pygame_module)
     except SongAudioBackendError as exc:
         raise StartupError(str(exc)) from exc
+
+    if getattr(song_audio_backend, "backend_name", "") == "pyfluidsynth":
+        synth = getattr(song_audio_backend, "synth", None)
+        if synth is not None:
+            resources.gesture_playback_controller = FluidSynthGesturePlaybackController.from_audio_config(
+                synth=synth,
+                audio_config=config.raw["audio"],
+                soundfont_id=getattr(song_audio_backend, "soundfont_id", None),
+            )
+            LOGGER.info(
+                "Configured FluidSynth-based immediate hand-in-circle cues for sustained gesture playback."
+            )
 
     round_index = 0
     show_title_screen = show_pre_song_title_screen(
