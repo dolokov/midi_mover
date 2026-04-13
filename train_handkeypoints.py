@@ -28,7 +28,10 @@ def _build_augmentation_overrides(mode: str) -> dict[str, float]:
             "mosaic": 1.0,
             "mixup": 0.20,
         }
-
+    if mode == "rotate":
+        return {
+            "degrees": 35.0,
+        }
     # vanilla: preserve current behavior (Ultralytics defaults / existing setup)
     return {}
 
@@ -57,7 +60,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--imgsz", type=int, default=640, help="Training image size.")
     parser.add_argument(
         "--augmentation-mode",
-        choices=("vanilla", "heavy"),
+        choices=("vanilla", "heavy", "rotate"),
         default="vanilla",
         help="Augmentation preset. 'vanilla' keeps current/default behavior; 'heavy' increases geometric and illumination augmentation.",
     )
@@ -79,7 +82,7 @@ def main() -> int:
 
     checkpoints_root = Path(os.path.expanduser("~/data/midi_mover/handcheckpoints"))
     datasets_root = args.datasets_dir.expanduser().resolve()
-    run_name = f"hand_{variant}_img{args.imgsz}_{timestamp}"
+    run_name = f"hand_{variant}_img{args.imgsz}_aug_{args.augmentation_mode}_{timestamp}"
 
     checkpoints_root.mkdir(parents=True, exist_ok=True)
     datasets_root.mkdir(parents=True, exist_ok=True)
