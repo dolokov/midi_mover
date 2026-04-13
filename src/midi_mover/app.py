@@ -10,9 +10,14 @@ from midi_mover.cli import StartupOptions, parse_args
 from midi_mover.config import AppConfig, ConfigError, load_config
 from midi_mover.audio import AudioStartupError, GesturePlaybackController, LoadedGestureSounds, build_gesture_sounds, initialize_audio_output
 from midi_mover.audio_integration_checks import verify_fluidsynth_profile_effect_settings
+from midi_mover.highscore_integration_checks import (
+    verify_headshot_crop_margin_behavior,
+    verify_highscore_headshot_persistence_behavior,
+)
 from midi_mover.interaction_visuals import CircleVisualStateTracker, HandCircleTransitionTracker
 from midi_mover.integration_checks import (verify_fingertip_audio_integration, verify_gameplay_score_tracking_behavior, verify_hit_window_judgment_behavior, verify_judgment_to_liveview_flash_behavior)
 from midi_mover.liveview import CropSmoother
+from midi_mover.app_logging import log_config_summary, log_startup
 from midi_mover.logging_utils import configure_logging
 from midi_mover.midi_files import (
     MidiDiscoveryError,
@@ -22,6 +27,7 @@ from midi_mover.midi_files import (
 )
 from midi_mover.midi_parser import MidiParseError, build_midi_debug_report
 from midi_mover.pose import GameplayKeypointTracker, PrimaryPersonTracker
+from midi_mover.highscore_handoff import run_post_song_highscore_handoff
 from midi_mover.song_intro import build_song_title, show_pre_song_title_screen
 from midi_mover.song_summary import SongCompleteSummary, show_song_complete_summary_screen
 from midi_mover.song_targets import load_normalized_target_notes_from_midi
@@ -383,6 +389,10 @@ def run_smoke_test(
     LOGGER.info("Verified gameplay score tracking behavior for score/combo/hit/miss metrics.")
     verify_fluidsynth_profile_effect_settings()
     LOGGER.info("Verified FluidSynth profile-based reverb/chorus settings across two instrument profiles.")
+    verify_headshot_crop_margin_behavior()
+    LOGGER.info("Verified highscore headshot crop margin behavior for countdown-complete capture framing.")
+    verify_highscore_headshot_persistence_behavior()
+    LOGGER.info("Verified highscore headshot persistence writes image path into stored leaderboard row.")
     LOGGER.info(
         "Smoke test touched subsystems successfully: window=%s mixer=%s frame_reader=%s pose_model=%s midi_files=%s.",
         resources.window.get_size(),
@@ -401,89 +411,127 @@ def run_interactive_runtime(
 ) -> None:
     LOGGER.info("Running persistent interactive liveview runtime.")
     midi_files = discover_midi_files(options.midi_dir, config)
-    selected_midi = choose_random_midi_file(midi_files, config)
-    selected_song_title = build_song_title(selected_midi)
-    if options.midi_inspect:
-        try:
-            LOGGER.info(
-                "\n%s",
-                build_midi_debug_report(
-                    midi_path=selected_midi,
-                    midi_config=config.raw["midi"],
-                    max_notes=options.midi_inspect_max_notes,
-                ),
-            )
-        except MidiParseError as exc:
-            raise StartupError(f"MIDI inspection failed for '{selected_midi.name}': {exc}") from exc
-    try:
-        normalized_target_notes = load_normalized_target_notes_from_midi(
-            midi_path=selected_midi,
-            midi_config=config.raw["midi"],
-        )
-    except MidiParseError as exc:
-        raise StartupError(
-            f"Failed to load normalized target notes for timeline rendering from '{selected_midi.name}': {exc}"
-        ) from exc
+    random_seed = config.raw["app"]["random_seed"]
+    midi_selector = MidiRandomSelector(midi_files, random_seed=random_seed)
     required = {
-        "window": resources.window, "pose_model": resources.pose_model, "hand_pose_model": resources.hand_pose_model,
-        "pygame_module": resources.pygame_module, "frame_reader": resources.frame_reader,
+        "window": resources.window,
+        "pose_model": resources.pose_model,
+        "hand_pose_model": resources.hand_pose_model,
+        "pygame_module": resources.pygame_module,
+        "frame_reader": resources.frame_reader,
         "primary_person_tracker": resources.primary_person_tracker,
         "gameplay_keypoint_tracker": resources.gameplay_keypoint_tracker,
         "interaction_transition_tracker": resources.interaction_transition_tracker,
-        "crop_smoother": resources.crop_smoother, "circle_visual_tracker": resources.circle_visual_tracker,
+        "crop_smoother": resources.crop_smoother,
+        "circle_visual_tracker": resources.circle_visual_tracker,
     }
     missing = [name for name, value in required.items() if value is None]
     if missing:
         raise StartupError(f"Interactive runtime failed: missing initialized resources: {', '.join(missing)}.")
+
     try:
         song_audio_backend = create_song_audio_backend(audio_config=config.raw["audio"], pygame_module=resources.pygame_module)
     except SongAudioBackendError as exc:
         raise StartupError(str(exc)) from exc
+
+    round_index = 0
     show_title_screen = show_pre_song_title_screen(
-        pygame_module=resources.pygame_module, window=resources.window, song_title=selected_song_title,
-        duration_seconds=float(config.raw["app"].get("song_title_screen_duration_seconds", 2.0)),
+        pygame_module=resources.pygame_module,
+        window=resources.window,
+        song_title="",
+        duration_seconds=0.0,
     )
     if not show_title_screen:
-        LOGGER.info("Pre-song title screen closed by user before gameplay runtime loop started.")
-        song_audio_backend.shutdown()
-        return
+        LOGGER.info("Pre-song title-screen bootstrap was skipped.")
+
     try:
-        pre_song_lead_in_ms = float(config.raw["gameplay"].get("pre_song_lead_in_ms", 0))
-        song_started_monotonic = time.monotonic()
-        lead_in_seconds = max(0.0, pre_song_lead_in_ms / 1000.0)
-        song_audio_start_at_monotonic = song_started_monotonic + lead_in_seconds
-        LOGGER.info(
-            "Transitioning from title screen to gameplay state: song='%s' lead_in_ms=%s audio_start_in=%.3fs.",
-            selected_song_title,
-            pre_song_lead_in_ms,
-            lead_in_seconds,
-        )
-        gameplay_exit_reason, final_score_state = run_persistent_liveview_loop(
-            window=resources.window,
-            pygame_module=resources.pygame_module,
-            frame_reader=resources.frame_reader,
-            pose_model=resources.pose_model,
-            hand_pose_model=resources.hand_pose_model,
-            primary_person_tracker=resources.primary_person_tracker,
-            gameplay_keypoint_tracker=resources.gameplay_keypoint_tracker,
-            interaction_transition_tracker=resources.interaction_transition_tracker,
-            crop_smoother=resources.crop_smoother,
-            circle_visual_tracker=resources.circle_visual_tracker,
-            config=config,
-            gesture_sounds=resources.gesture_sounds,
-            gesture_playback_controller=resources.gesture_playback_controller,
-            normalized_target_notes=normalized_target_notes,
-            song_started_monotonic=song_started_monotonic,
-            pre_song_lead_in_ms=pre_song_lead_in_ms,
-            song_audio_start=lambda: song_audio_backend.start_song(selected_midi),
-            song_audio_start_at_monotonic=song_audio_start_at_monotonic,
-        )
-        if gameplay_exit_reason == "song_complete":
+        while True:
+            round_index += 1
+            selected_midi = midi_selector.choose()
+            selected_song_title = build_song_title(selected_midi)
+            if random_seed is None:
+                LOGGER.info("Selected random MIDI file for round %s: %s", round_index, selected_midi.name)
+            else:
+                LOGGER.info(
+                    "Selected random MIDI file for round %s using deterministic seed %s: %s",
+                    round_index,
+                    random_seed,
+                    selected_midi.name,
+                )
+            if options.midi_inspect:
+                try:
+                    LOGGER.info(
+                        "\n%s",
+                        build_midi_debug_report(
+                            midi_path=selected_midi,
+                            midi_config=config.raw["midi"],
+                            max_notes=options.midi_inspect_max_notes,
+                        ),
+                    )
+                except MidiParseError as exc:
+                    raise StartupError(f"MIDI inspection failed for '{selected_midi.name}': {exc}") from exc
+            try:
+                normalized_target_notes = load_normalized_target_notes_from_midi(
+                    midi_path=selected_midi,
+                    midi_config=config.raw["midi"],
+                )
+            except MidiParseError as exc:
+                raise StartupError(
+                    f"Failed to load normalized target notes for timeline rendering from '{selected_midi.name}': {exc}"
+                ) from exc
+
+            show_title_screen = show_pre_song_title_screen(
+                pygame_module=resources.pygame_module,
+                window=resources.window,
+                song_title=selected_song_title,
+                duration_seconds=float(config.raw["app"].get("song_title_screen_duration_seconds", 2.0)),
+            )
+            if not show_title_screen:
+                LOGGER.info("Pre-song title screen closed by user before gameplay runtime loop started.")
+                return
+
+            pre_song_lead_in_ms = float(config.raw["gameplay"].get("pre_song_lead_in_ms", 0))
+            song_started_monotonic = time.monotonic()
+            lead_in_seconds = max(0.0, pre_song_lead_in_ms / 1000.0)
+            song_audio_start_at_monotonic = song_started_monotonic + lead_in_seconds
+            LOGGER.info(
+                "Transitioning from title screen to gameplay state: song='%s' lead_in_ms=%s audio_start_in=%.3fs.",
+                selected_song_title,
+                pre_song_lead_in_ms,
+                lead_in_seconds,
+            )
+            gameplay_exit_reason, final_score_state = run_persistent_liveview_loop(
+                window=resources.window,
+                pygame_module=resources.pygame_module,
+                frame_reader=resources.frame_reader,
+                pose_model=resources.pose_model,
+                hand_pose_model=resources.hand_pose_model,
+                primary_person_tracker=resources.primary_person_tracker,
+                gameplay_keypoint_tracker=resources.gameplay_keypoint_tracker,
+                interaction_transition_tracker=resources.interaction_transition_tracker,
+                crop_smoother=resources.crop_smoother,
+                circle_visual_tracker=resources.circle_visual_tracker,
+                config=config,
+                gesture_sounds=resources.gesture_sounds,
+                gesture_playback_controller=resources.gesture_playback_controller,
+                normalized_target_notes=normalized_target_notes,
+                song_started_monotonic=song_started_monotonic,
+                pre_song_lead_in_ms=pre_song_lead_in_ms,
+                song_audio_start=lambda: song_audio_backend.start_song(selected_midi),
+                song_audio_start_at_monotonic=song_audio_start_at_monotonic,
+            )
+            try:
+                song_audio_backend.stop_song()
+            except SongAudioBackendError:
+                LOGGER.exception("Failed to stop target-song audio backend cleanly after round end.")
+
+            if gameplay_exit_reason != "song_complete":
+                LOGGER.info("Gameplay state ended by user input; skipping post-song state handoff.")
+                return
+
             LOGGER.info("Transitioning from gameplay state to song-complete state handoff.")
             if final_score_state is None:
-                LOGGER.warning(
-                    "Song complete without score state; rendering summary with zeroed fallback metrics."
-                )
+                LOGGER.warning("Song complete without score state; rendering summary with zeroed fallback metrics.")
                 summary = SongCompleteSummary(
                     song_title=selected_song_title,
                     score=0,
@@ -507,9 +555,7 @@ def run_interactive_runtime(
                 pygame_module=resources.pygame_module,
                 window=resources.window,
                 summary=summary,
-                duration_seconds=float(
-                    config.raw["app"].get("song_summary_screen_duration_seconds", 3.0)
-                ),
+                duration_seconds=float(config.raw["app"].get("song_summary_screen_duration_seconds", 3.0)),
             )
             if not show_summary:
                 LOGGER.info("Song-complete summary screen closed by user.")
@@ -523,8 +569,19 @@ def run_interactive_runtime(
                     summary.percentage_hit,
                     summary.max_combo,
                 )
-        else:
-            LOGGER.info("Gameplay state ended by user input; skipping post-song state handoff.")
+
+            run_post_song_highscore_handoff(
+                summary=summary,
+                config_payload=config.raw,
+                pygame_module=resources.pygame_module,
+                window=resources.window,
+                frame_reader=resources.frame_reader,
+                pose_model=resources.pose_model,
+                primary_person_tracker=resources.primary_person_tracker,
+                gameplay_keypoint_tracker=resources.gameplay_keypoint_tracker,
+                logger=LOGGER,
+            )
+            LOGGER.info("Leaderboard transition completed; advancing to the next random song title screen.")
     except LiveviewRuntimeError as exc:
         raise StartupError(str(exc)) from exc
     finally:
@@ -532,38 +589,10 @@ def run_interactive_runtime(
             song_audio_backend.shutdown()
         except SongAudioBackendError:
             LOGGER.exception("Failed to shut down target-song audio backend cleanly.")
-def _log_startup(options: StartupOptions) -> None:
-    LOGGER.info("Starting midi_mover startup skeleton")
-    LOGGER.info("camera_id=%s", options.camera_id)
-    LOGGER.info("midi_dir=%s", options.midi_dir)
-    LOGGER.info("config_path=%s", options.config_path)
-    LOGGER.info("stage1_pose_model_override=%s", options.stage1_pose_model or "<config>")
-    LOGGER.info("stage2_hand_model_override=%s", options.stage2_hand_model or "<config>")
-    LOGGER.info("smoke_test=%s", options.smoke_test)
-    LOGGER.info("midi_inspect=%s midi_inspect_max_notes=%s", options.midi_inspect, options.midi_inspect_max_notes)
-def _log_config_summary(config: AppConfig) -> None:
-    raw = config.raw
-    LOGGER.info(
-        "Loaded config: window=%sx%s fps=%s pose_model=%s",
-        raw["app"]["window_width"],
-        raw["app"]["window_height"],
-        raw["app"]["target_fps"],
-        raw["pose"]["stage1_model_name"],
-    )
-    LOGGER.info(
-        "Configured stage-2 hand model=%s",
-        raw["pose"]["stage2_hand_model_name"],
-    )
-    LOGGER.info(
-        "Liveview ratio=%s circle_radius_percent=%s supported_midi_extensions=%s",
-        raw["liveview"]["left_panel_ratio"],
-        raw["liveview"]["circle_radius_percent"],
-        ", ".join(raw["midi"]["supported_extensions"]),
-    )
 def run(argv: list[str] | None = None) -> int:
     options = parse_args(argv)
     configure_logging(options.log_level)
-    _log_startup(options)
+    log_startup(options)
     try:
         config = load_config(options.config_path)
     except ConfigError as exc:
@@ -577,8 +606,8 @@ def run(argv: list[str] | None = None) -> int:
             options.log_level.upper(),
             configured_level,
         )
-        _log_startup(options)
-    _log_config_summary(config)
+        log_startup(options)
+    log_config_summary(config)
     resources: StartupResources | None = None
     try:
         resources = initialize_runtime(options, config)

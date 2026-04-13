@@ -138,8 +138,7 @@ REQUIRED_PATHS: tuple[tuple[str, ...], ...] = (
     ("audio", "playback", "sustain_while_inside"),
     ("audio", "playback", "release_fade_ms"),
     ("highscore", "list_size"),
-    ("highscore", "headshot_countdown_seconds"),
-    ("highscore", "headshot_crop_margin"),
+    ("highscore", "headshot_countdown_seconds"), ("highscore", "leaderboard_screen_duration_seconds"), ("highscore", "headshot_crop_margin"),
     ("highscore", "thumbnail_width"),
     ("highscore", "thumbnail_height"),
 )
@@ -384,14 +383,9 @@ def _validate_value_types(payload: dict[str, Any]) -> None:
     _require_type(payload["audio"]["playback"]["release_fade_ms"], int, "audio.playback.release_fade_ms")
     _validate_gesture_sounds(payload["audio"]["gesture_sounds"])
     _require_type(payload["highscore"]["list_size"], int, "highscore.list_size")
-    _require_numeric(
-        payload["highscore"]["headshot_countdown_seconds"],
-        "highscore.headshot_countdown_seconds",
-    )
-    _require_numeric(
-        payload["highscore"]["headshot_crop_margin"],
-        "highscore.headshot_crop_margin",
-    )
+    _require_numeric(payload["highscore"]["headshot_countdown_seconds"], "highscore.headshot_countdown_seconds")
+    _require_numeric(payload["highscore"]["leaderboard_screen_duration_seconds"], "highscore.leaderboard_screen_duration_seconds")
+    _require_numeric(payload["highscore"]["headshot_crop_margin"], "highscore.headshot_crop_margin")
     _require_type(payload["highscore"]["thumbnail_width"], int, "highscore.thumbnail_width")
     _require_type(payload["highscore"]["thumbnail_height"], int, "highscore.thumbnail_height")
     circle_offsets_percent = {

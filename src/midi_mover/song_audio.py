@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from pathlib import Path
 from typing import Any, Protocol
+
+
+LOGGER = logging.getLogger("midi_mover")
 
 
 class SongAudioBackendError(RuntimeError):
@@ -217,14 +221,112 @@ def create_song_audio_backend(*, audio_config: dict[str, Any], pygame_module: An
 
     backend = str(audio_config.get("backend", "pygame")).strip().lower()
     if backend == "pygame":
-        volumes = audio_config.get("volumes", {}) if isinstance(audio_config.get("volumes"), dict) else {}
-        playback_gain = max(0.0, min(float(volumes.get("cue", 1.0)), 1.0))
-        return PygameSongAudioBackend(pygame_module=pygame_module, playback_gain=playback_gain)
+        return _build_pygame_song_backend(audio_config=audio_config, pygame_module=pygame_module)
     if backend in {"pyfluidsynth", "fluidsynth"}:
-        return FluidSynthSongAudioBackend.initialize_from_config(audio_config=audio_config)
+        fallback_enabled = bool(audio_config.get("fallback_to_pygame_on_error", True))
+        try:
+            song_backend = FluidSynthSongAudioBackend.initialize_from_config(audio_config=audio_config)
+        except SongAudioBackendError as exc:
+            if not fallback_enabled:
+                raise
+            LOGGER.warning(
+                "Requested target-song backend '%s' is unavailable (%s). Falling back to pygame backend.",
+                backend,
+                exc,
+            )
+            fallback_backend = _build_pygame_song_backend(
+                audio_config=audio_config,
+                pygame_module=pygame_module,
+            )
+            LOGGER.info(
+                "Using fallback target-song backend '%s' after '%s' initialization failure.",
+                fallback_backend.backend_name,
+                backend,
+            )
+            return fallback_backend
+        ensure_immediate_cue_routing(
+            audio_config=audio_config,
+            pygame_module=pygame_module,
+            song_backend_name=song_backend.backend_name,
+        )
+        return song_backend
     raise SongAudioBackendError(
         f"Unsupported target-song audio backend '{backend}'. Configure audio.backend to a supported backend."
     )
+
+
+def _build_pygame_song_backend(*, audio_config: dict[str, Any], pygame_module: Any) -> PygameSongAudioBackend:
+    """Build pygame song backend and enforce immediate-cue routing requirements."""
+
+    volumes = audio_config.get("volumes", {}) if isinstance(audio_config.get("volumes"), dict) else {}
+    playback_gain = max(0.0, min(float(volumes.get("cue", 1.0)), 1.0))
+    song_backend = PygameSongAudioBackend(pygame_module=pygame_module, playback_gain=playback_gain)
+    ensure_immediate_cue_routing(
+        audio_config=audio_config,
+        pygame_module=pygame_module,
+        song_backend_name=song_backend.backend_name,
+    )
+    return song_backend
+
+
+def ensure_immediate_cue_routing(
+    *,
+    audio_config: dict[str, Any],
+    pygame_module: Any,
+    song_backend_name: str,
+) -> str:
+    """Keep low-latency immediate interaction cues routed through pygame mixer."""
+
+    immediate_cfg = (
+        audio_config.get("immediate_cues")
+        if isinstance(audio_config.get("immediate_cues"), dict)
+        else {}
+    )
+    requested_routing = str(immediate_cfg.get("routing", "mixed_pygame")).strip().lower()
+    if requested_routing in {"mixed", "pygame"}:
+        requested_routing = "mixed_pygame"
+
+    if requested_routing not in {"mixed_pygame", "song_backend"}:
+        raise SongAudioBackendError(
+            "Invalid audio.immediate_cues.routing value. "
+            "Use 'mixed_pygame' or 'song_backend'."
+        )
+
+    resolved_routing = requested_routing
+    if requested_routing == "song_backend" and str(song_backend_name).strip().lower() not in {"pygame"}:
+        resolved_routing = "mixed_pygame"
+        LOGGER.warning(
+            "audio.immediate_cues.routing='song_backend' cannot provide low-latency hit/miss/UI cues with "
+            "song backend '%s'. Falling back to pygame mixed strategy for immediate cues.",
+            song_backend_name,
+        )
+
+    mixer = getattr(pygame_module, "mixer", None)
+    if mixer is None or not callable(getattr(mixer, "get_init", None)):
+        raise SongAudioBackendError(
+            "Immediate cue routing requires pygame.mixer to remain available for hit/miss/UI interactions."
+        )
+    if mixer.get_init() is None:
+        raise SongAudioBackendError(
+            "Immediate cue routing requires an initialized pygame mixer for low-latency interaction cues."
+        )
+
+    playback_cfg = audio_config.get("playback") if isinstance(audio_config.get("playback"), dict) else {}
+    target_channels = max(1, int(playback_cfg.get("max_concurrent_sounds", 1)))
+    get_num_channels = getattr(mixer, "get_num_channels", None)
+    set_num_channels = getattr(mixer, "set_num_channels", None)
+    if callable(get_num_channels) and callable(set_num_channels):
+        current_channels = int(get_num_channels())
+        if current_channels < target_channels:
+            set_num_channels(target_channels)
+
+    LOGGER.info(
+        "Configured immediate interaction cue routing: requested=%s resolved=%s song_backend=%s.",
+        requested_routing,
+        resolved_routing,
+        song_backend_name,
+    )
+    return resolved_routing
 
 
 def resolve_fluidsynth_channel_presets(*, audio_config: dict[str, Any]) -> dict[int, tuple[int, int]]:

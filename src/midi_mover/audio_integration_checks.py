@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from midi_mover.song_audio import resolve_fluidsynth_effects_settings
+from dataclasses import dataclass
+
+from midi_mover.song_audio import ensure_immediate_cue_routing, resolve_fluidsynth_effects_settings
 
 
 def verify_fluidsynth_profile_effect_settings() -> None:
@@ -41,4 +43,51 @@ def verify_fluidsynth_profile_effect_settings() -> None:
     if float(piano_settings["reverb"]["room_size"]) >= float(lead_settings["reverb"]["room_size"]):
         raise RuntimeError(
             "FluidSynth profile effects check failed: synth_lead should resolve stronger reverb room_size than concert_piano."
+        )
+
+
+@dataclass
+class _FakeMixer:
+    initialized: bool = True
+    num_channels: int = 1
+
+    def get_init(self) -> tuple[int, int, int] | None:
+        if self.initialized:
+            return (44100, -16, 2)
+        return None
+
+    def get_num_channels(self) -> int:
+        return int(self.num_channels)
+
+    def set_num_channels(self, count: int) -> None:
+        self.num_channels = int(count)
+
+
+@dataclass
+class _FakePygame:
+    mixer: _FakeMixer
+
+
+def verify_immediate_cue_mixed_routing_behavior() -> None:
+    """Verify immediate cues remain pygame-routed for low latency with FluidSynth song backend."""
+
+    audio_config = {
+        "playback": {"max_concurrent_sounds": 6},
+        "immediate_cues": {"routing": "song_backend"},
+    }
+    pygame_module = _FakePygame(mixer=_FakeMixer(initialized=True, num_channels=2))
+    resolved = ensure_immediate_cue_routing(
+        audio_config=audio_config,
+        pygame_module=pygame_module,
+        song_backend_name="pyfluidsynth",
+    )
+    if resolved != "mixed_pygame":
+        raise RuntimeError(
+            "Immediate cue routing integration check failed: expected fallback to mixed_pygame for pyfluidsynth backend. "
+            f"resolved={resolved}"
+        )
+    if pygame_module.mixer.num_channels < 6:
+        raise RuntimeError(
+            "Immediate cue routing integration check failed: expected pygame mixer channels to be provisioned "
+            "for gesture cue concurrency."
         )
