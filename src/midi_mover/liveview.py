@@ -97,30 +97,35 @@ def compute_liveview_layout(
     frame_height: int,
     selection: PrimaryPersonSelection | None,
     gameplay_keypoints: GameplayKeypoints | None,
-    eye_target_x_ratio: float,
-    eye_target_y_ratio: float,
-    eye_crop_width_multiplier: float,
-    eye_crop_above_multiplier: float,
-    eye_crop_below_multiplier: float,
+    eye_center_x_pct: float,
+    eye_center_y_pct: float,
+    crop_width_eye_dist: float,
     target_panel_width: int,
     target_panel_height: int,
 ) -> LiveviewLayout:
     """Compute an eye-centered crop and full-height scaled size.
 
+    ``eye_center_x_pct`` / ``eye_center_y_pct`` define where within the
+    resulting crop the detected eye center should appear (0.0–1.0 fractions
+    of crop width / height).  ``crop_width_eye_dist`` sets the total crop
+    width as a multiple of the inter-eye distance; smaller → tighter crop
+    (bigger head in frame), larger → wider crop (smaller head).  The crop
+    height is derived from the panel aspect ratio so the image always fills
+    the panel without clipping.
+
     When eye landmarks are unavailable, the full frame is used as a safe
     fallback.
     """
-
+    target_aspect_ratio = max(1e-6, float(target_panel_width) / max(1, float(target_panel_height)))
     crop = compute_person_crop(
         frame_width=frame_width,
         frame_height=frame_height,
         selection=selection,
         gameplay_keypoints=gameplay_keypoints,
-        eye_target_x_ratio=eye_target_x_ratio,
-        eye_target_y_ratio=eye_target_y_ratio,
-        eye_crop_width_multiplier=eye_crop_width_multiplier,
-        eye_crop_above_multiplier=eye_crop_above_multiplier,
-        eye_crop_below_multiplier=eye_crop_below_multiplier,
+        eye_center_x_pct=eye_center_x_pct,
+        eye_center_y_pct=eye_center_y_pct,
+        crop_width_eye_dist=crop_width_eye_dist,
+        target_aspect_ratio=target_aspect_ratio,
     )
     return compute_liveview_layout_for_crop(
         crop=crop,
@@ -173,13 +178,37 @@ def compute_person_crop(
     frame_height: int,
     selection: PrimaryPersonSelection | None,
     gameplay_keypoints: GameplayKeypoints | None,
-    eye_target_x_ratio: float,
-    eye_target_y_ratio: float,
-    eye_crop_width_multiplier: float,
-    eye_crop_above_multiplier: float,
-    eye_crop_below_multiplier: float,
+    eye_center_x_pct: float,
+    eye_center_y_pct: float,
+    crop_width_eye_dist: float,
+    target_aspect_ratio: float,
 ) -> CropRect:
-    """Return a clamped crop rectangle driven by the detected eye landmarks."""
+    """Return a clamped crop rectangle driven by the detected eye landmarks.
+
+    Crop dimensions are derived as follows:
+
+    * ``crop_width_eye_dist`` — total crop width as a multiple of the
+      inter-eye distance::
+
+          crop_width = crop_width_eye_dist * eye_distance
+
+      Smaller value → tighter crop (bigger head).  Larger → wider crop.
+
+    * ``target_aspect_ratio`` (= panel_width / panel_height) — the crop
+      height is derived from the width so the crop matches the panel aspect
+      ratio exactly::
+
+          crop_height = crop_width / target_aspect_ratio
+
+    * The crop origin is placed so the eye centre lands at the requested
+      anchor fractions within the crop::
+
+          left = eye_center_x - eye_center_x_pct * crop_width
+          top  = eye_center_y - eye_center_y_pct * crop_height
+
+    When eye landmarks are unavailable the full camera frame is returned
+    as a safe fallback.
+    """
 
     safe_frame_width = max(1, int(frame_width))
     safe_frame_height = max(1, int(frame_height))
@@ -192,14 +221,22 @@ def compute_person_crop(
     right_eye = getattr(gameplay_keypoints, "right_eye", None)
     if eye_center is not None and left_eye is not None and right_eye is not None:
         eye_distance = max(1.0, abs(float(right_eye.xy[0]) - float(left_eye.xy[0])))
-        width = max(1, int(round(eye_distance * max(1.0, float(eye_crop_width_multiplier)))))
-        above = max(1.0, eye_distance * max(0.5, float(eye_crop_above_multiplier)))
-        below = max(1.0, eye_distance * max(0.5, float(eye_crop_below_multiplier)))
-        height = max(1, int(round(above + below)))
-        target_x_ratio = _clamp01(eye_target_x_ratio)
-        target_y_ratio = _clamp01(eye_target_y_ratio)
-        left = int(round(float(eye_center[0]) - width * target_x_ratio))
-        top = int(round(float(eye_center[1]) - height * target_y_ratio))
+
+        safe_x_pct = max(0.01, min(0.99, float(eye_center_x_pct)))
+        safe_y_pct = max(0.01, min(0.99, float(eye_center_y_pct)))
+        safe_w_mult = max(0.1, float(crop_width_eye_dist))
+        safe_ar = max(1e-6, float(target_aspect_ratio))
+
+        # Crop width = multiplier × eye_distance.
+        width = max(1, int(round(safe_w_mult * eye_distance)))
+
+        # Crop height derived from width and panel aspect ratio.
+        height = max(1, int(round(width / safe_ar)))
+
+        # Crop origin so the eye centre lands at the anchor fractions.
+        left = int(round(float(eye_center[0]) - safe_x_pct * width))
+        top = int(round(float(eye_center[1]) - safe_y_pct * height))
+
         return clamp_crop_rect(
             CropRect(x=left, y=top, width=width, height=height),
             frame_width=safe_frame_width,

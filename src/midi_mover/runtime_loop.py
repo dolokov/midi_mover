@@ -150,7 +150,7 @@ def render_liveview_frame(
         left_circle_offsets_percent=config.raw["liveview"]["left_circle_offsets_percent"],
         right_circle_offsets_percent=config.raw["liveview"]["right_circle_offsets_percent"],
         circle_radius_percent=float(config.raw["liveview"]["circle_radius_percent"]),
-        scale_width_multiplier=float(config.raw["liveview"]["eye_crop_width_multiplier"]),
+        scale_width_multiplier=float(config.raw["liveview"]["crop_width_eye_dist"]),
     )
     resolved_swap_hands = resolve_frame_hand_swap(
         frame_mirrored=bool(frame.mirrored),
@@ -227,11 +227,9 @@ def render_liveview_frame(
         frame_height=frame.height,
         selection=selection,
         gameplay_keypoints=gameplay_keypoints,
-        eye_target_x_ratio=float(config.raw["liveview"]["eye_target_x_ratio"]),
-        eye_target_y_ratio=float(config.raw["liveview"]["eye_target_y_ratio"]),
-        eye_crop_width_multiplier=float(config.raw["liveview"]["eye_crop_width_multiplier"]),
-        eye_crop_above_multiplier=float(config.raw["liveview"]["eye_crop_above_multiplier"]),
-        eye_crop_below_multiplier=float(config.raw["liveview"]["eye_crop_below_multiplier"]),
+        eye_center_x_pct=float(config.raw["liveview"]["eye_center_x_pct"]),
+        eye_center_y_pct=float(config.raw["liveview"]["eye_center_y_pct"]),
+        crop_width_eye_dist=float(config.raw["liveview"]["crop_width_eye_dist"]),
         target_panel_width=left_panel_width,
         target_panel_height=left_panel_height,
     )

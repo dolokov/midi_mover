@@ -42,11 +42,9 @@ REQUIRED_PATHS: tuple[tuple[str, ...], ...] = (
     ("liveview", "left_panel_ratio"),
     ("liveview", "crop_smoothing_factor"),
     ("liveview", "crop_max_jump_ratio"),
-    ("liveview", "eye_target_x_ratio"),
-    ("liveview", "eye_target_y_ratio"),
-    ("liveview", "eye_crop_width_multiplier"),
-    ("liveview", "eye_crop_above_multiplier"),
-    ("liveview", "eye_crop_below_multiplier"),
+    ("liveview", "eye_center_x_pct"),
+    ("liveview", "eye_center_y_pct"),
+    ("liveview", "crop_width_eye_dist"),
     ("liveview", "circle_visuals", "idle", "outline_color"),
     ("liveview", "circle_visuals", "idle", "fill_color"),
     ("liveview", "circle_visuals", "idle", "label_color"),
@@ -250,11 +248,9 @@ def _validate_value_types(payload: dict[str, Any]) -> None:
     _require_numeric(payload["liveview"]["left_panel_ratio"], "liveview.left_panel_ratio")
     _require_numeric(payload["liveview"]["crop_smoothing_factor"], "liveview.crop_smoothing_factor")
     _require_numeric(payload["liveview"]["crop_max_jump_ratio"], "liveview.crop_max_jump_ratio")
-    _require_numeric(payload["liveview"]["eye_target_x_ratio"], "liveview.eye_target_x_ratio")
-    _require_numeric(payload["liveview"]["eye_target_y_ratio"], "liveview.eye_target_y_ratio")
-    _require_numeric(payload["liveview"]["eye_crop_width_multiplier"], "liveview.eye_crop_width_multiplier")
-    _require_numeric(payload["liveview"]["eye_crop_above_multiplier"], "liveview.eye_crop_above_multiplier")
-    _require_numeric(payload["liveview"]["eye_crop_below_multiplier"], "liveview.eye_crop_below_multiplier")
+    _require_numeric(payload["liveview"]["eye_center_x_pct"], "liveview.eye_center_x_pct")
+    _require_numeric(payload["liveview"]["eye_center_y_pct"], "liveview.eye_center_y_pct")
+    _require_numeric(payload["liveview"]["crop_width_eye_dist"], "liveview.crop_width_eye_dist")
     _require_type(payload["liveview"]["circle_visuals"], dict, "liveview.circle_visuals")
     _require_type(payload["liveview"]["debug"], dict, "liveview.debug")
     _require_type(payload["liveview"]["debug"]["show_head_center"], bool, "liveview.debug.show_head_center")
