@@ -377,9 +377,16 @@ def draw_liveview_overlay(
 
     font = _get_overlay_font(pygame_module, label_font_size)
     scaled_stroke_width = max(1, int(round(circle_stroke_width * min(scale_x, scale_y))))
-    circle_states_by_lane = {state.lane: state for state in circle_visual_states}
-    default_style = CircleVisualStyle(
-        outline_color=(96, 165, 250),
+    # Key by (hand, lane) to support separate L and R circles per lane.
+    circle_states_by_key = {(state.hand, state.lane): state for state in circle_visual_states}
+    # Default styles differ per hand for visual distinction.
+    default_style_L = CircleVisualStyle(
+        outline_color=(96, 165, 250),   # blue — left hand
+        fill_color=(0, 0, 0),
+        label_color=(255, 255, 255),
+    )
+    default_style_R = CircleVisualStyle(
+        outline_color=(52, 211, 153),   # green — right hand
         fill_color=(0, 0, 0),
         label_color=(255, 255, 255),
     )
@@ -388,8 +395,10 @@ def draw_liveview_overlay(
         circle_x = int((circle.center_xy[0] - crop_x) * scale_x)
         circle_y = int((circle.center_xy[1] - crop_y) * scale_y)
         circle_radius = max(1, int(circle.radius * min(scale_x, scale_y)))
-        visual_state = circle_states_by_lane.get(circle.lane)
+        hand = getattr(circle, "hand", "")
+        visual_state = circle_states_by_key.get((hand, circle.lane))
         state_name = visual_state.state_name if visual_state is not None else "idle"
+        default_style = default_style_L if hand == "L" else default_style_R
         style = default_style
         if circle_visual_styles is not None:
             style = circle_visual_styles.get(state_name, default_style)
@@ -407,11 +416,14 @@ def draw_liveview_overlay(
             circle_radius,
             width=scaled_stroke_width,
         )
+        # Label shows the full token (e.g. "L3" or "R5") so both the hand
+        # side and the lane number are immediately readable in the overlay.
+        token_label = f"{hand}{circle.lane}" if hand else str(circle.lane)
         _draw_circle_label(
             surface,
             pygame_module,
             font,
-            label=str(circle.lane),
+            label=token_label,
             center_xy=(circle_x, circle_y),
             circle_radius=circle_radius,
             label_color=style.label_color,

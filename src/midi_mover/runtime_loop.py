@@ -147,7 +147,8 @@ def render_liveview_frame(
         gameplay_keypoints=gameplay_keypoints,
         frame_width=frame.width,
         frame_height=frame.height,
-        circle_offsets_percent=config.raw["liveview"]["circle_offsets_percent"],
+        left_circle_offsets_percent=config.raw["liveview"]["left_circle_offsets_percent"],
+        right_circle_offsets_percent=config.raw["liveview"]["right_circle_offsets_percent"],
         circle_radius_percent=float(config.raw["liveview"]["circle_radius_percent"]),
         scale_width_multiplier=float(config.raw["liveview"]["eye_crop_width_multiplier"]),
     )

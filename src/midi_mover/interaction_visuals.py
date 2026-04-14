@@ -31,6 +31,7 @@ class CircleVisualState:
     """Resolved state for one circle on the current frame."""
 
     lane: int
+    hand: str  # "L" or "R"
     state_name: CircleVisualStateName
     active_hands: tuple[str, ...]
 
@@ -40,6 +41,7 @@ class CircleContactState:
     """Per-frame hand contact summary for a circle."""
 
     lane: int
+    hand: str  # "L" or "R"
     active_hands: tuple[str, ...]
 
 
@@ -256,6 +258,7 @@ class CircleFlashState:
     """Timed flash override for a circle."""
 
     lane: int
+    hand: str  # "L" or "R"
     state_name: CircleVisualStateName
     expires_at_monotonic: float
 
@@ -266,8 +269,9 @@ class CircleVisualStateTracker:
     def __init__(self, *, hit_flash_duration_ms: int, miss_flash_duration_ms: int) -> None:
         self._hit_flash_duration_ms = max(0, int(hit_flash_duration_ms))
         self._miss_flash_duration_ms = max(0, int(miss_flash_duration_ms))
-        self._previous_contacts: dict[int, tuple[str, ...]] = {}
-        self._flash_states: dict[int, CircleFlashState] = {}
+        self._previous_contacts: dict[tuple[str, int], tuple[str, ...]] = {}
+        # Flash states keyed by (hand, lane) to support per-hand flashes.
+        self._flash_states: dict[tuple[str, int], CircleFlashState] = {}
 
     def reset(self) -> None:
         self._previous_contacts.clear()
@@ -282,6 +286,10 @@ class CircleVisualStateTracker:
         hit_lanes: tuple[int, ...] = (),
         miss_lanes: tuple[int, ...] = (),
         now_monotonic: float | None = None,
+        # Per-token hits/misses provide more granular flash control when
+        # the caller knows which hand triggered each event.
+        hit_tokens: tuple[str, ...] = (),
+        miss_tokens: tuple[str, ...] = (),
     ) -> tuple[CircleVisualState, ...]:
         timestamp = time.monotonic() if now_monotonic is None else float(now_monotonic)
         interactions = interaction_snapshot
@@ -292,31 +300,54 @@ class CircleVisualStateTracker:
                 now_monotonic=timestamp,
             )
         contacts = interaction_snapshot_to_circle_contacts(interactions, circle_geometries)
-        current_contacts = {contact.lane: contact.active_hands for contact in contacts}
+        current_contacts = {(contact.hand, contact.lane): contact.active_hands for contact in contacts}
 
-        for lane in hit_lanes:
-            self._flash_states[int(lane)] = CircleFlashState(
-                lane=int(lane),
-                state_name="hit_flash",
-                expires_at_monotonic=timestamp + (self._hit_flash_duration_ms / 1000.0),
-            )
-        for lane in miss_lanes:
-            self._flash_states[int(lane)] = CircleFlashState(
-                lane=int(lane),
-                state_name="miss_flash",
-                expires_at_monotonic=timestamp + (self._miss_flash_duration_ms / 1000.0),
-            )
+        # Resolve flash targets — prefer per-token (hand+lane) over lane-only.
+        _apply_token_flashes(
+            flash_states=self._flash_states,
+            tokens=hit_tokens,
+            state_name="hit_flash",
+            duration_ms=self._hit_flash_duration_ms,
+            timestamp=timestamp,
+        )
+        _apply_token_flashes(
+            flash_states=self._flash_states,
+            tokens=miss_tokens,
+            state_name="miss_flash",
+            duration_ms=self._miss_flash_duration_ms,
+            timestamp=timestamp,
+        )
+        # Legacy lane-only flash support: flash both hands' circles for
+        # that lane when no per-token info is available.
+        if not hit_tokens:
+            for lane in hit_lanes:
+                for h in ("L", "R"):
+                    self._flash_states[(h, int(lane))] = CircleFlashState(
+                        lane=int(lane),
+                        hand=h,
+                        state_name="hit_flash",
+                        expires_at_monotonic=timestamp + (self._hit_flash_duration_ms / 1000.0),
+                    )
+        if not miss_tokens:
+            for lane in miss_lanes:
+                for h in ("L", "R"):
+                    self._flash_states[(h, int(lane))] = CircleFlashState(
+                        lane=int(lane),
+                        hand=h,
+                        state_name="miss_flash",
+                        expires_at_monotonic=timestamp + (self._miss_flash_duration_ms / 1000.0),
+                    )
 
         self._flash_states = {
-            lane: flash
-            for lane, flash in self._flash_states.items()
+            key: flash
+            for key, flash in self._flash_states.items()
             if flash.expires_at_monotonic > timestamp
         }
         self._previous_contacts = current_contacts
 
         resolved_states: list[CircleVisualState] = []
         for contact in contacts:
-            flash = self._flash_states.get(contact.lane)
+            flash = self._flash_states.get((contact.hand, contact.lane))
             if flash is not None:
                 state_name = flash.state_name
             elif contact.active_hands:
@@ -326,11 +357,38 @@ class CircleVisualStateTracker:
             resolved_states.append(
                 CircleVisualState(
                     lane=contact.lane,
+                    hand=contact.hand,
                     state_name=state_name,
                     active_hands=contact.active_hands,
                 )
             )
         return tuple(resolved_states)
+
+
+def _apply_token_flashes(
+    *,
+    flash_states: dict[tuple[str, int], CircleFlashState],
+    tokens: tuple[str, ...],
+    state_name: CircleVisualStateName,
+    duration_ms: int,
+    timestamp: float,
+) -> None:
+    """Apply per-token flash entries to the flash state dict."""
+    for token in tokens:
+        token = str(token).strip()
+        if len(token) < 2:
+            continue
+        hand_char = token[0].upper()
+        lane_str = token[1:]
+        if hand_char not in ("L", "R") or not lane_str.isdigit():
+            continue
+        lane = int(lane_str)
+        flash_states[(hand_char, lane)] = CircleFlashState(
+            lane=lane,
+            hand=hand_char,
+            state_name=state_name,
+            expires_at_monotonic=timestamp + (duration_ms / 1000.0),
+        )
 
 
 def detect_hand_circle_interactions(
@@ -345,6 +403,11 @@ def detect_hand_circle_interactions(
     Interaction registration is fingertip-driven (stage-2 hand model): a hand is
     considered inside a lane if any confidence-gated fingertip assigned to that
     hand is inside the circle for that lane.
+
+    Each hand only tests against circles tagged with its own hand identifier
+    (``circle.hand == "L"`` for left, ``circle.hand == "R"`` for right).  When
+    circles overlap, this guarantees that only the correct hand can trigger each
+    circle regardless of spatial proximity.
     """
 
     timestamp = now_monotonic
@@ -363,8 +426,17 @@ def detect_hand_circle_interactions(
             "L": fingertips_by_hand["R"],
             "R": fingertips_by_hand["L"],
         }
-    left_hand = _build_hand_interaction_state("L", fingertips_by_hand["L"], circle_geometries)
-    right_hand = _build_hand_interaction_state("R", fingertips_by_hand["R"], circle_geometries)
+
+    # Each hand only tests against its own set of circles.
+    left_circles = tuple(c for c in circle_geometries if c.hand == "L")
+    right_circles = tuple(c for c in circle_geometries if c.hand == "R")
+    # Fall back to all circles when hand tags are absent (legacy data).
+    if not left_circles and not right_circles:
+        left_circles = circle_geometries
+        right_circles = circle_geometries
+
+    left_hand = _build_hand_interaction_state("L", fingertips_by_hand["L"], left_circles)
+    right_hand = _build_hand_interaction_state("R", fingertips_by_hand["R"], right_circles)
     active_tokens = left_hand.active_tokens + right_hand.active_tokens
     return InteractionStateSnapshot(
         captured_at_monotonic=timestamp,
@@ -378,12 +450,24 @@ def interaction_snapshot_to_circle_contacts(
     snapshot: InteractionStateSnapshot,
     circle_geometries: tuple[CircleGeometry, ...],
 ) -> tuple[CircleContactState, ...]:
-    """Convert structured hand occupancy into circle-centric contact summaries."""
+    """Convert structured hand occupancy into circle-centric contact summaries.
 
-    return tuple(
-        CircleContactState(lane=circle.lane, active_hands=snapshot.active_hands_for_lane(circle.lane))
-        for circle in circle_geometries
-    )
+    Each circle carries a ``hand`` tag so the contact state correctly reflects
+    whether the matching hand (L or R) is inside it.
+    """
+
+    contacts: list[CircleContactState] = []
+    for circle in circle_geometries:
+        hand_state = snapshot.hand_state(circle.hand)  # type: ignore[arg-type]
+        is_inside = hand_state.is_inside_lane(circle.lane)
+        contacts.append(
+            CircleContactState(
+                lane=circle.lane,
+                hand=circle.hand,
+                active_hands=(circle.hand,) if is_inside else (),
+            )
+        )
+    return tuple(contacts)
 
 
 def detect_circle_contacts(
@@ -421,6 +505,7 @@ def _build_hand_interaction_state(
     fingertip_points: tuple[tuple[float, float], ...],
     circle_geometries: tuple[CircleGeometry, ...],
 ) -> HandInteractionState:
+    """Test fingertip points against the circles assigned to this hand."""
     wrist_xy = _compute_centroid_xy(fingertip_points)
     occupancies = tuple(
         HandCircleOccupancy(

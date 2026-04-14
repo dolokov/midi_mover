@@ -1,4 +1,10 @@
-"""Five-circle gameplay geometry anchored to the tracked head center."""
+"""Five-circle gameplay geometry anchored to the tracked head center.
+
+Each hand (L/R) has its own set of five circles so that overlapping
+positions are possible while still routing interactions correctly:
+left-hand fingertips only trigger L-labelled circles and right-hand
+fingertips only trigger R-labelled circles.
+"""
 
 from __future__ import annotations
 
@@ -13,12 +19,22 @@ EXPECTED_CIRCLE_ORDER: tuple[str, ...] = ("1", "2", "3", "4", "5")
 
 @dataclass(frozen=True)
 class CircleGeometry:
-    """One numbered gameplay circle positioned in source-frame coordinates."""
+    """One numbered gameplay circle positioned in source-frame coordinates.
+
+    The ``hand`` field is either ``"L"`` (left hand) or ``"R"`` (right hand)
+    and determines which hand's fingertips can trigger this circle.
+    """
 
     lane: int
+    hand: str  # "L" or "R"
     center_xy: tuple[float, float]
     radius: int
     offset_xy: tuple[float, float]
+
+    @property
+    def token(self) -> str:
+        """Gesture token for this circle, e.g. ``'L3'`` or ``'R5'``."""
+        return f"{self.hand}{self.lane}"
 
 
 def compute_circle_geometries(
@@ -27,22 +43,28 @@ def compute_circle_geometries(
     gameplay_keypoints: GameplayKeypoints | None,
     frame_width: int,
     frame_height: int,
-    circle_offsets_percent: dict[str, list[float] | tuple[float, float]],
+    left_circle_offsets_percent: dict[str, list[float] | tuple[float, float]],
+    right_circle_offsets_percent: dict[str, list[float] | tuple[float, float]],
     circle_radius_percent: float,
     scale_width_multiplier: float = 12.0,
 ) -> tuple[CircleGeometry, ...]:
-    """Compute the five fixed gameplay circles anchored to the tracked head center.
+    """Compute ten fixed gameplay circles anchored to the tracked head center.
 
-    When eye landmarks are available, circle spacing is scaled from the current
-    eye distance so the overlay stays visually tied to the player's head even
-    as they move closer to or farther from the camera. If eye landmarks are not
-    available, fall back to the historic full-frame percentage behavior.
+    Five circles are assigned to the left hand and five to the right hand.
+    When eye landmarks are available, circle spacing is scaled from the
+    current eye distance so the overlay stays visually tied to the player's
+    head even as they move closer to or farther from the camera.  If eye
+    landmarks are not available, fall back to the historic full-frame
+    percentage behavior.
+
+    Overlapping left/right circles are fully supported: interaction
+    detection filters by hand before testing, so the correct circle is
+    always triggered by the correct hand.
     """
 
     if head_center_xy is None:
         return ()
 
-    normalized_offsets = _normalize_circle_offsets(circle_offsets_percent)
     head_x, head_y = float(head_center_xy[0]), float(head_center_xy[1])
     base_dimension = _resolve_circle_scale_basis(
         gameplay_keypoints=gameplay_keypoints,
@@ -52,20 +74,25 @@ def compute_circle_geometries(
     )
     pixels_per_percent = base_dimension / 100.0
     radius = max(1, int(round(float(circle_radius_percent) * pixels_per_percent)))
-    geometries: list[CircleGeometry] = []
 
-    for lane_key in EXPECTED_CIRCLE_ORDER:
-        offset_x_percent, offset_y_percent = normalized_offsets[lane_key]
-        offset_x = offset_x_percent * pixels_per_percent
-        offset_y = offset_y_percent * pixels_per_percent
-        geometries.append(
-            CircleGeometry(
-                lane=int(lane_key),
-                center_xy=(head_x + offset_x, head_y + offset_y),
-                radius=radius,
-                offset_xy=(offset_x, offset_y),
+    left_normalized = _normalize_circle_offsets(left_circle_offsets_percent)
+    right_normalized = _normalize_circle_offsets(right_circle_offsets_percent)
+
+    geometries: list[CircleGeometry] = []
+    for hand, normalized_offsets in (("L", left_normalized), ("R", right_normalized)):
+        for lane_key in EXPECTED_CIRCLE_ORDER:
+            offset_x_percent, offset_y_percent = normalized_offsets[lane_key]
+            offset_x = offset_x_percent * pixels_per_percent
+            offset_y = offset_y_percent * pixels_per_percent
+            geometries.append(
+                CircleGeometry(
+                    lane=int(lane_key),
+                    hand=str(hand),
+                    center_xy=(head_x + offset_x, head_y + offset_y),
+                    radius=radius,
+                    offset_xy=(offset_x, offset_y),
+                )
             )
-        )
 
     return tuple(geometries)
 

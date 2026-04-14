@@ -93,7 +93,8 @@ REQUIRED_PATHS: tuple[tuple[str, ...], ...] = (
     ("liveview", "debug", "stage2_hand_keypoints_style", "fingertip_outline_color"),
     ("liveview", "debug", "stage2_hand_keypoints_style", "fingertip_outline_width"),
     ("liveview", "circle_radius_percent"),
-    ("liveview", "circle_offsets_percent"),
+    ("liveview", "left_circle_offsets_percent"),
+    ("liveview", "right_circle_offsets_percent"),
     ("liveview", "circle_stroke_width"),
     ("liveview", "label_font_size"),
     ("liveview", "wrist_marker_radius"),
@@ -296,9 +297,14 @@ def _validate_value_types(payload: dict[str, Any]) -> None:
         "liveview.circle_radius_percent",
     )
     _require_type(
-        payload["liveview"]["circle_offsets_percent"],
+        payload["liveview"]["left_circle_offsets_percent"],
         dict,
-        "liveview.circle_offsets_percent",
+        "liveview.left_circle_offsets_percent",
+    )
+    _require_type(
+        payload["liveview"]["right_circle_offsets_percent"],
+        dict,
+        "liveview.right_circle_offsets_percent",
     )
     _require_type(payload["liveview"]["circle_stroke_width"], int, "liveview.circle_stroke_width")
     _require_type(payload["liveview"]["label_font_size"], int, "liveview.label_font_size")
@@ -432,17 +438,28 @@ def _validate_value_types(payload: dict[str, Any]) -> None:
     _require_numeric(payload["highscore"]["headshot_crop_margin"], "highscore.headshot_crop_margin")
     _require_type(payload["highscore"]["thumbnail_width"], int, "highscore.thumbnail_width")
     _require_type(payload["highscore"]["thumbnail_height"], int, "highscore.thumbnail_height")
-    circle_offsets_percent = {
-        _normalize_mapping_key(key): value
-        for key, value in payload["liveview"]["circle_offsets_percent"].items()
+    _validate_and_normalize_circle_offsets(
+        payload["liveview"],
+        "left_circle_offsets_percent",
+    )
+    _validate_and_normalize_circle_offsets(
+        payload["liveview"],
+        "right_circle_offsets_percent",
+    )
+def _validate_and_normalize_circle_offsets(liveview_payload: dict[str, Any], key: str) -> None:
+    """Normalize and validate a circle-offsets dict in-place (keys '1'..'5', values [x,y])."""
+    raw_offsets: dict[str, Any] = liveview_payload[key]
+    normalized = {
+        _normalize_mapping_key(k): value for k, value in raw_offsets.items()
     }
-    payload["liveview"]["circle_offsets_percent"] = circle_offsets_percent
-    if sorted(circle_offsets_percent.keys()) != ["1", "2", "3", "4", "5"]:
+    liveview_payload[key] = normalized
+    full_key = f"liveview.{key}"
+    if sorted(normalized.keys()) != ["1", "2", "3", "4", "5"]:
         raise ConfigError(
-            "liveview.circle_offsets_percent must define exactly the string keys '1' through '5'."
+            f"{full_key} must define exactly the string keys '1' through '5'."
         )
-    for key, offset in circle_offsets_percent.items():
-        _require_vector2(offset, f"liveview.circle_offsets_percent.{key}")
+    for lane_key, offset in normalized.items():
+        _require_vector2(offset, f"{full_key}.{lane_key}")
 def _require_type(value: Any, expected_type: type, name: str) -> None:
     if not isinstance(value, expected_type):
         raise ConfigError(

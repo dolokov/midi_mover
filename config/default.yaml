@@ -92,12 +92,25 @@ liveview:
       fingertip_outline_color: [131, 24, 67]
       fingertip_outline_width: 2
   circle_radius_percent: 5.83
-  circle_offsets_percent:
-    "1": [-36.0, -40.0]
-    "2": [-18.0, -40.0]
-    "3": [0.0, -40.0]
-    "4": [18.0, -40.0]
-    "5": [36.0, -40.0]
+  # Left-hand circles — positions reachable by the left hand.
+  # All offsets are percentages relative to the eye-distance-based scale unit,
+  # anchored to the detected head center. Negative x = left, negative y = up.
+  left_circle_offsets_percent:
+    "1": [-10, -40.0]
+    "2": [-30, -25.0]
+    "3": [-50, -10.0]
+    "4": [-60, 25.0]
+    "5": [-70, 40.0]
+  # Right-hand circles — positions reachable by the right hand.
+  # Overlaps with left-hand circles are allowed: each circle only responds
+  # to its own hand's fingertips.
+  right_circle_offsets_percent:
+    "1": [10.0, -40.0]
+    "2": [30.0, -25.0]
+    "3": [50.0, -10.0]
+    "4": [60.0, 25.0]
+    "5": [70.0, 40.0]
+
   circle_stroke_width: 4
   label_font_size: 24
   wrist_marker_radius: 10
