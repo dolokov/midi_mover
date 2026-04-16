@@ -118,6 +118,35 @@ def run_post_song_highscore_handoff(
         logger.info("Highscore countdown screen closed by user.")
         return
 
+    highscore_payload = config_payload.get("highscore")
+    warmup_frames = 0
+    if isinstance(highscore_payload, Mapping):
+        warmup_frames = max(
+            0,
+            int(highscore_payload.get("post_countdown_camera_warmup_frames", 3)),
+        )
+    if warmup_frames > 0:
+        warmed_up = 0
+        for _ in range(warmup_frames):
+            try:
+                frame_reader.read(pygame_module)
+            except Exception as exc:  # pragma: no cover - hardware/runtime specific
+                logger.warning(
+                    "Post-countdown camera warmup frame read failed after %s/%s frames: %s. "
+                    "Proceeding with headshot capture.",
+                    warmed_up,
+                    warmup_frames,
+                    exc,
+                )
+                break
+            warmed_up += 1
+
+        logger.info(
+            "Post-countdown camera warmup completed: requested=%s captured=%s.",
+            warmup_frames,
+            warmed_up,
+        )
+
     headshot_capture = capture_headshot_from_runtime(
         frame_reader=frame_reader,
         pygame_module=pygame_module,
