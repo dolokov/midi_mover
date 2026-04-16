@@ -46,6 +46,12 @@ liveview:
       outline_color: [96, 165, 250]
       fill_color: [0, 0, 0]
       label_color: [255, 255, 255]
+    # precue: circle lights up blue N ms before the target note so the player
+    # can move their hand there in time.
+    precue:
+      outline_color: [59, 130, 246]
+      fill_color: [29, 78, 216]
+      label_color: [255, 255, 255]
     active_contact:
       outline_color: [250, 204, 21]
       fill_color: [59, 130, 246]
@@ -60,6 +66,10 @@ liveview:
       label_color: [255, 255, 255]
     hit_flash_duration_ms: 180
     miss_flash_duration_ms: 220
+    # Cyan stroke drawn on top of any circle that the player's hand is
+    # currently inside.  Width is in source-frame pixels (scaled with display).
+    contact_stroke_color: [0, 255, 255]
+    contact_stroke_width: 6
   debug:
     show_head_center: false
     show_wrist_markers: true
@@ -130,6 +140,9 @@ gameplay:
   note_history_ms: 1500
   lookahead_ms: 2500
   timeline_now_line_ratio: 0.75
+  # How many milliseconds before a note's target time the circle lights up
+  # blue (pre-cue) so the player has time to move their hand there.
+  precue_ms: 800
   score_values:
     hit: 100
     miss: -25

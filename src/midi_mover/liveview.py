@@ -334,6 +334,9 @@ def draw_liveview_overlay(
     show_wrist_markers: bool = True,
     wrist_marker_radius: int = 10,
     wrist_marker_outline_width: int = 2,
+    # Cyan stroke drawn on top when the player's hand is inside the circle.
+    contact_stroke_color: tuple[int, int, int] = (0, 255, 255),
+    contact_stroke_width: int = 6,
     show_stage1_full_keypoints: bool = False,
     stage1_keypoints_xy: tuple[tuple[float, float], ...] = (),
     stage1_keypoints_conf: tuple[float, ...] = (),
@@ -453,6 +456,18 @@ def draw_liveview_overlay(
             circle_radius,
             width=scaled_stroke_width,
         )
+        # Draw cyan contact stroke on top whenever the hand is inside the
+        # circle.  This overlays any state-based outline so it is always
+        # readable regardless of the current visual state.
+        if visual_state is not None and visual_state.active_hands:
+            scaled_contact_stroke = max(2, int(round(contact_stroke_width * min(scale_x, scale_y))))
+            pygame_module.draw.circle(
+                surface,
+                contact_stroke_color,
+                (circle_x, circle_y),
+                circle_radius,
+                width=scaled_contact_stroke,
+            )
         # Label shows the full token (e.g. "L3" or "R5") so both the hand
         # side and the lane number are immediately readable in the overlay.
         token_label = f"{hand}{circle.lane}" if hand else str(circle.lane)

@@ -12,7 +12,7 @@ from midi_mover.hand_keypoints import FingertipSample
 from midi_mover.pose import GameplayKeypoints, KeypointSample
 
 
-CircleVisualStateName = Literal["idle", "active_contact", "hit_flash", "miss_flash"]
+CircleVisualStateName = Literal["idle", "precue", "active_contact", "hit_flash", "miss_flash"]
 HandName = Literal["L", "R"]
 TransitionStateName = Literal["idle", "enter", "stay", "exit"]
 
@@ -290,6 +290,8 @@ class CircleVisualStateTracker:
         # the caller knows which hand triggered each event.
         hit_tokens: tuple[str, ...] = (),
         miss_tokens: tuple[str, ...] = (),
+        # Tokens whose circles should show the precue state (upcoming note).
+        precue_tokens: tuple[str, ...] = (),
     ) -> tuple[CircleVisualState, ...]:
         timestamp = time.monotonic() if now_monotonic is None else float(now_monotonic)
         interactions = interaction_snapshot
@@ -345,13 +347,29 @@ class CircleVisualStateTracker:
         }
         self._previous_contacts = current_contacts
 
+        # Normalise precue_tokens into a fast lookup set of (hand, lane) pairs.
+        precue_set: set[tuple[str, int]] = set()
+        for token in precue_tokens:
+            token_s = str(token).strip()
+            if len(token_s) < 2:
+                continue
+            hand_char = token_s[0].upper()
+            lane_str = token_s[1:]
+            if hand_char in ("L", "R") and lane_str.isdigit():
+                precue_set.add((hand_char, int(lane_str)))
+
         resolved_states: list[CircleVisualState] = []
         for contact in contacts:
             flash = self._flash_states.get((contact.hand, contact.lane))
             if flash is not None:
+                # Hit/miss flash has highest priority.
                 state_name = flash.state_name
             elif contact.active_hands:
+                # Hand is physically inside the circle.
                 state_name = "active_contact"
+            elif (contact.hand, contact.lane) in precue_set:
+                # Upcoming note within the precue window.
+                state_name = "precue"
             else:
                 state_name = "idle"
             resolved_states.append(

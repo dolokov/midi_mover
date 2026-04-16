@@ -73,7 +73,7 @@ def load_circle_visual_styles(config: Any) -> dict[str, CircleVisualStyle]:
             fill_color=tuple(visuals[state_name]["fill_color"]),
             label_color=tuple(visuals[state_name]["label_color"]),
         )
-        for state_name in ("idle", "active_contact", "hit_flash", "miss_flash")
+        for state_name in ("idle", "precue", "active_contact", "hit_flash", "miss_flash")
     }
 def render_liveview_frame(
     *,
@@ -215,12 +215,21 @@ def render_liveview_frame(
             transition_snapshot=transition_snapshot,
             gesture_sounds=gesture_sounds,
         )
+    precue_tokens = _compute_precue_tokens(
+        normalized_target_notes=normalized_target_notes,
+        song_started_monotonic=song_started_monotonic,
+        pre_song_lead_in_ms=pre_song_lead_in_ms,
+        precue_ms=float(config.raw["gameplay"].get("precue_ms", 0.0)),
+        hit_window_ms=float(config.raw["gameplay"]["hit_window_ms"]),
+        hit_window_judge=hit_window_judge,
+    )
     circle_visual_states = circle_visual_tracker.update(
         circle_geometries=circle_geometries,
         gameplay_keypoints=gameplay_keypoints,
         interaction_snapshot=interaction_snapshot,
         hit_lanes=judged_hit_lanes,
         miss_lanes=judged_miss_lanes,
+        precue_tokens=precue_tokens,
     )
     target_layout = compute_liveview_layout(
         frame_width=frame.width,
@@ -280,6 +289,7 @@ def render_liveview_frame(
         cropped_frame.render_surface,
         (layout.scaled_width, layout.scaled_height),
     )
+    circle_visuals_cfg = config.raw["liveview"]["circle_visuals"]
     draw_liveview_overlay(
         scaled_surface,
         source_width=cropped_frame.width,
@@ -295,6 +305,8 @@ def render_liveview_frame(
         crop_origin=(layout.crop.x, layout.crop.y),
         circle_stroke_width=int(config.raw["liveview"]["circle_stroke_width"]),
         label_font_size=int(config.raw["liveview"]["label_font_size"]),
+        contact_stroke_color=tuple(circle_visuals_cfg.get("contact_stroke_color", [0, 255, 255])),
+        contact_stroke_width=int(circle_visuals_cfg.get("contact_stroke_width", 6)),
         show_head_center_marker=bool(config.raw["liveview"]["debug"]["show_head_center"]),
         show_wrist_markers=bool(config.raw["liveview"]["debug"]["show_wrist_markers"]),
         wrist_marker_radius=int(config.raw["liveview"]["wrist_marker_radius"]),
@@ -599,3 +611,49 @@ def _to_rows(value: Any) -> list[list[Any]]:
         else:
             rows.append([row])
     return rows
+
+
+def _compute_precue_tokens(
+    *,
+    normalized_target_notes: tuple[Any, ...],
+    song_started_monotonic: float | None,
+    pre_song_lead_in_ms: float,
+    precue_ms: float,
+    hit_window_ms: float,
+    hit_window_judge: HitWindowJudge | None,
+) -> tuple[str, ...]:
+    """Return gesture tokens for notes that are within the precue window.
+
+    A note enters the precue window ``precue_ms`` before its target hit time
+    and leaves when the hit window closes (``note_time + hit_window_ms``).
+    Already-judged notes (hit or missed) are excluded so the circle doesn't
+    keep glowing after the note has been resolved.
+    """
+
+    if not normalized_target_notes or song_started_monotonic is None or precue_ms <= 0.0:
+        return ()
+
+    lead_in_seconds = max(0.0, float(pre_song_lead_in_ms) / 1000.0)
+    song_elapsed_ms = (time.monotonic() - float(song_started_monotonic) - lead_in_seconds) * 1000.0
+
+    already_judged: frozenset[str] = frozenset()
+    if hit_window_judge is not None:
+        already_judged = hit_window_judge.matched_note_ids | hit_window_judge.missed_note_ids
+
+    tokens: list[str] = []
+    seen_tokens: set[str] = set()
+    for note in normalized_target_notes:
+        note_id = str(getattr(note, "target_note_id", ""))
+        if note_id and note_id in already_judged:
+            continue
+        note_ts_ms = float(getattr(note, "timestamp_ms", 0.0))
+        # Precue window: [note_ts - precue_ms, note_ts + hit_window_ms]
+        if song_elapsed_ms < (note_ts_ms - precue_ms):
+            continue
+        if song_elapsed_ms > (note_ts_ms + hit_window_ms):
+            continue
+        token = str(getattr(note, "token", ""))
+        if token and token not in seen_tokens:
+            tokens.append(token)
+            seen_tokens.add(token)
+    return tuple(tokens)
