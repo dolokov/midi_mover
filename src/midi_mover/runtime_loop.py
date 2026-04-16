@@ -518,7 +518,7 @@ def _log_frame_summary(
             f"hands={len(hand_inference.remapped_keypoints_xy)}"
         )
 
-    LOGGER.info(
+    if 0: LOGGER.info(
         "Prepared person-centered liveview crop: frame=%sx%s crop=(x=%s y=%s w=%s h=%s) scaled=%sx%s visible_width=%s blit=(%s,%s) source_offset_x=%s mirrored=%s left_panel=%sx%s primary_person=%s keypoints=%s stage2_hand=%s transitions=%s.",
         frame.width,
         frame.height,

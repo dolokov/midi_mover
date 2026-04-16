@@ -365,7 +365,7 @@ def draw_liveview_overlay(
         max(1, int((x2 - x1) * scale_x)),
         max(1, int((y2 - y1) * scale_y)),
     )
-    pygame_module.draw.rect(surface, (96, 165, 250), rect, width=3)
+    #pygame_module.draw.rect(surface, (96, 165, 250), rect, width=3)
 
     head_center_xy = getattr(gameplay_keypoints, "head_center_xy", None)
     if show_head_center_marker and head_center_xy is not None:
