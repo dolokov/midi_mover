@@ -15,7 +15,7 @@ camera:
   mirror: true
 
 pose:
-  stage1_model_name: yolo11n-pose.pt
+  stage1_model_name: yolo26n-pose.pt
   stage2_hand_model_name: /home/alex/data/midi_mover/handcheckpoints/hand_26n_img640_aug_rotate_20260413_063312/weights/best.pt
   stage2_roi_expansion_px: 30
   confidence_threshold: 0.5

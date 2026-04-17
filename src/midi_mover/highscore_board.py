@@ -222,6 +222,10 @@ def _load_thumbnail_surface(
     target_width: int,
     target_height: int,
 ) -> Any:
+    safe_target_width = max(1, int(target_width))
+    safe_target_height = max(1, int(target_height))
+    thumbnail_bg_color = (30, 41, 59)
+
     if headshot_path:
         absolute_path = Path(headshot_path)
         if not absolute_path.is_absolute():
@@ -229,19 +233,38 @@ def _load_thumbnail_surface(
         if absolute_path.exists():
             try:
                 image_surface = pygame_module.image.load(str(absolute_path))
-                return pygame_module.transform.scale(
-                    image_surface,
-                    (int(target_width), int(target_height)),
+                source_width = max(1, int(image_surface.get_width()))
+                source_height = max(1, int(image_surface.get_height()))
+                fit_scale = min(
+                    safe_target_width / float(source_width),
+                    safe_target_height / float(source_height),
                 )
+                fitted_width = max(1, min(safe_target_width, int(round(source_width * fit_scale))))
+                fitted_height = max(1, min(safe_target_height, int(round(source_height * fit_scale))))
+                fitted_surface = pygame_module.transform.smoothscale(
+                    image_surface,
+                    (fitted_width, fitted_height),
+                )
+
+                padded_surface = pygame_module.Surface((safe_target_width, safe_target_height))
+                padded_surface.fill(thumbnail_bg_color)
+                padded_surface.blit(
+                    fitted_surface,
+                    (
+                        (safe_target_width - fitted_width) // 2,
+                        (safe_target_height - fitted_height) // 2,
+                    ),
+                )
+                return padded_surface
             except Exception as exc:  # pragma: no cover - defensive fallback
                 LOGGER.warning("Failed to load headshot thumbnail '%s': %s", absolute_path, exc)
 
-    placeholder = pygame_module.Surface((int(target_width), int(target_height)))
-    placeholder.fill((30, 41, 59))
+    placeholder = pygame_module.Surface((safe_target_width, safe_target_height))
+    placeholder.fill(thumbnail_bg_color)
     pygame_module.draw.rect(
         placeholder,
         (71, 85, 105),
-        pygame_module.Rect(0, 0, int(target_width), int(target_height)),
+        pygame_module.Rect(0, 0, safe_target_width, safe_target_height),
         width=2,
     )
     return placeholder
