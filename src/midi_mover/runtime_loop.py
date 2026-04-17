@@ -93,6 +93,7 @@ def render_liveview_frame(
     normalized_target_notes: tuple[Any, ...] = (),
     song_started_monotonic: float | None = None,
     pre_song_lead_in_ms: float = 0.0,
+    song_speed_multiplier: float = 1.0,
     hit_window_judge: HitWindowJudge | None = None,
     gameplay_score_tracker: GameplayScoreTracker | None = None,
 ) -> None:
@@ -179,10 +180,15 @@ def render_liveview_frame(
             transition_snapshot=transition_snapshot,
             song_started_monotonic=song_started_monotonic,
             pre_song_lead_in_ms=pre_song_lead_in_ms,
+            song_speed_multiplier=song_speed_multiplier,
         )
         if song_started_monotonic is not None:
             lead_in_seconds = max(0.0, float(pre_song_lead_in_ms) / 1000.0)
-            song_elapsed_seconds = time.monotonic() - float(song_started_monotonic) - lead_in_seconds
+            safe_song_speed = max(1e-6, float(song_speed_multiplier))
+            song_elapsed_seconds = (
+                (time.monotonic() - float(song_started_monotonic) - lead_in_seconds)
+                * safe_song_speed
+            )
             hit_window_judge.mark_misses_for_song_elapsed_ms(song_elapsed_seconds * 1000.0)
         if gameplay_score_tracker is not None:
             gameplay_score_tracker.register_hits(judged_hits)
@@ -222,6 +228,7 @@ def render_liveview_frame(
         normalized_target_notes=normalized_target_notes,
         song_started_monotonic=song_started_monotonic,
         pre_song_lead_in_ms=pre_song_lead_in_ms,
+        song_speed_multiplier=song_speed_multiplier,
         precue_ms=float(config.raw["gameplay"].get("precue_ms", 0.0)),
         hit_window_ms=float(config.raw["gameplay"]["hit_window_ms"]),
         hit_window_judge=hit_window_judge,
@@ -269,7 +276,11 @@ def render_liveview_frame(
     song_elapsed_seconds = 0.0
     if song_started_monotonic is not None:
         lead_in_seconds = max(0.0, float(pre_song_lead_in_ms) / 1000.0)
-        song_elapsed_seconds = time.monotonic() - float(song_started_monotonic) - lead_in_seconds
+        safe_song_speed = max(1e-6, float(song_speed_multiplier))
+        song_elapsed_seconds = (
+            (time.monotonic() - float(song_started_monotonic) - lead_in_seconds)
+            * safe_song_speed
+        )
     judged_note_outcomes: dict[str, str] | None = None
     if hit_window_judge is not None:
         judged_note_outcomes = hit_window_judge.judged_note_outcomes
@@ -384,14 +395,17 @@ def run_persistent_liveview_loop(
     normalized_target_notes: tuple[Any, ...] = (),
     song_started_monotonic: float | None = None,
     pre_song_lead_in_ms: float = 0.0,
+    song_speed_multiplier: float = 1.0,
     song_audio_start: Any | None = None,
     song_audio_start_at_monotonic: float | None = None,
 ) -> tuple[str, GameplayScoreState | None]:
     target_fps = max(1, int(config.raw["app"]["target_fps"]))
     clock = pygame_module.time.Clock()
     LOGGER.info(
-        "Starting persistent liveview loop. Press ESC or close the window to exit. target_fps=%s",
+        "Starting persistent liveview loop. Press ESC or close the window to exit. "
+        "target_fps=%s song_speed_multiplier=%.3f",
         target_fps,
+        float(song_speed_multiplier),
     )
     running = True
     hit_window_judge: HitWindowJudge | None = None
@@ -410,13 +424,18 @@ def run_persistent_liveview_loop(
         )
     song_complete_at_monotonic: float | None = None
     if song_started_monotonic is not None and normalized_target_notes:
+        safe_song_speed = max(1e-6, float(song_speed_multiplier))
         last_target_end_seconds = max(
             float(getattr(note, "timestamp_seconds", 0.0)) + float(getattr(note, "duration_seconds", 0.0))
             for note in normalized_target_notes
         )
         history_seconds = max(0.0, float(config.raw["gameplay"].get("note_history_ms", 0.0)) / 1000.0)
         lead_in_seconds = max(0.0, float(pre_song_lead_in_ms) / 1000.0)
-        song_complete_at_monotonic = float(song_started_monotonic) + lead_in_seconds + last_target_end_seconds + history_seconds
+        song_complete_at_monotonic = (
+            float(song_started_monotonic)
+            + lead_in_seconds
+            + ((last_target_end_seconds + history_seconds) / safe_song_speed)
+        )
     while running:
         for event in pygame_module.event.get():
             if event.type == pygame_module.QUIT:
@@ -455,6 +474,7 @@ def run_persistent_liveview_loop(
             normalized_target_notes=normalized_target_notes,
             song_started_monotonic=song_started_monotonic,
             pre_song_lead_in_ms=pre_song_lead_in_ms,
+            song_speed_multiplier=song_speed_multiplier,
             hit_window_judge=hit_window_judge,
             gameplay_score_tracker=gameplay_score_tracker,
         )
@@ -621,6 +641,7 @@ def _compute_precue_tokens(
     normalized_target_notes: tuple[Any, ...],
     song_started_monotonic: float | None,
     pre_song_lead_in_ms: float,
+    song_speed_multiplier: float,
     precue_ms: float,
     hit_window_ms: float,
     hit_window_judge: HitWindowJudge | None,
@@ -637,7 +658,12 @@ def _compute_precue_tokens(
         return ()
 
     lead_in_seconds = max(0.0, float(pre_song_lead_in_ms) / 1000.0)
-    song_elapsed_ms = (time.monotonic() - float(song_started_monotonic) - lead_in_seconds) * 1000.0
+    safe_song_speed = max(1e-6, float(song_speed_multiplier))
+    song_elapsed_ms = (
+        (time.monotonic() - float(song_started_monotonic) - lead_in_seconds)
+        * 1000.0
+        * safe_song_speed
+    )
 
     already_judged: frozenset[str] = frozenset()
     if hit_window_judge is not None:

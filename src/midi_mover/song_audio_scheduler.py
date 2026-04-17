@@ -34,7 +34,12 @@ class ScheduledFluidSynthPlayback:
         _all_sounds_off(self.synth)
 
 
-def start_scheduled_fluidsynth_playback(*, synth: Any, midi_path: Path) -> ScheduledFluidSynthPlayback:
+def start_scheduled_fluidsynth_playback(
+    *,
+    synth: Any,
+    midi_path: Path,
+    song_speed_multiplier: float = 1.0,
+) -> ScheduledFluidSynthPlayback:
     """Start MIDI playback by scheduling parsed MIDI messages on a background thread."""
 
     try:
@@ -59,7 +64,7 @@ def start_scheduled_fluidsynth_playback(*, synth: Any, midi_path: Path) -> Sched
     stop_event = threading.Event()
     worker_thread = threading.Thread(
         target=_run_midi_schedule_worker,
-        args=(synth, midi_file, stop_event),
+        args=(synth, midi_file, stop_event, max(1e-6, float(song_speed_multiplier))),
         name="midi_mover_fluidsynth_scheduler",
         daemon=True,
     )
@@ -71,7 +76,12 @@ def start_scheduled_fluidsynth_playback(*, synth: Any, midi_path: Path) -> Sched
     )
 
 
-def _run_midi_schedule_worker(synth: Any, midi_file: Any, stop_event: threading.Event) -> None:
+def _run_midi_schedule_worker(
+    synth: Any,
+    midi_file: Any,
+    stop_event: threading.Event,
+    song_speed_multiplier: float,
+) -> None:
     playback_start = time.monotonic()
     elapsed_target_seconds = 0.0
     try:
@@ -79,6 +89,7 @@ def _run_midi_schedule_worker(synth: Any, midi_file: Any, stop_event: threading.
             if stop_event.is_set():
                 break
             delta_seconds = max(0.0, float(getattr(message, "time", 0.0)))
+            delta_seconds /= max(1e-6, float(song_speed_multiplier))
             elapsed_target_seconds += delta_seconds
             _sleep_until_elapsed_target(
                 playback_start=playback_start,

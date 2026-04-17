@@ -26,7 +26,7 @@ class SongAudioBackend(Protocol):
 
     backend_name: str
 
-    def start_song(self, midi_path: Path) -> None:
+    def start_song(self, midi_path: Path, *, song_speed_multiplier: float = 1.0) -> None:
         """Begin target-song playback for the selected MIDI path."""
 
     def stop_song(self) -> None:
@@ -44,7 +44,13 @@ class PygameSongAudioBackend:
     playback_gain: float
     backend_name: str = "pygame"
 
-    def start_song(self, midi_path: Path) -> None:
+    def start_song(self, midi_path: Path, *, song_speed_multiplier: float = 1.0) -> None:
+        safe_song_speed = max(1e-6, float(song_speed_multiplier))
+        if abs(safe_song_speed - 1.0) > 1e-6:
+            LOGGER.warning(
+                "Pygame song backend does not support tempo scaling; requested song_speed_multiplier=%.3f will be ignored.",
+                safe_song_speed,
+            )
         try:
             self.pygame_module.mixer.music.load(str(midi_path))
             self.pygame_module.mixer.music.set_volume(self.playback_gain)
@@ -168,7 +174,8 @@ class FluidSynthSongAudioBackend:
             cue_channel=_resolve_fluidsynth_cue_channel(audio_config),
         )
 
-    def start_song(self, midi_path: Path) -> None:
+    def start_song(self, midi_path: Path, *, song_speed_multiplier: float = 1.0) -> None:
+        safe_song_speed = max(1e-6, float(song_speed_multiplier))
         self.stop_song()
         self._apply_song_channel_volume()
         if not midi_path.exists() or not midi_path.is_file():
@@ -178,6 +185,11 @@ class FluidSynthSongAudioBackend:
 
         player_cls = getattr(self.fluidsynth_module, "Player", None)
         if player_cls is not None:
+            if abs(safe_song_speed - 1.0) > 1e-6:
+                LOGGER.warning(
+                    "FluidSynth Player path does not currently apply song_speed_multiplier=%.3f; using native tempo.",
+                    safe_song_speed,
+                )
             try:
                 player = player_cls(self.synth)
                 player.add(str(midi_path))
@@ -192,6 +204,11 @@ class FluidSynthSongAudioBackend:
 
         midi_file_play = getattr(self.synth, "midi_file_play", None)
         if callable(midi_file_play):
+            if abs(safe_song_speed - 1.0) > 1e-6:
+                LOGGER.warning(
+                    "FluidSynth Synth.midi_file_play path does not currently apply song_speed_multiplier=%.3f; using native tempo.",
+                    safe_song_speed,
+                )
             try:
                 midi_file_play(str(midi_path))
                 return
@@ -205,6 +222,7 @@ class FluidSynthSongAudioBackend:
             self._active_player = start_scheduled_fluidsynth_playback(
                 synth=self.synth,
                 midi_path=midi_path,
+                song_speed_multiplier=safe_song_speed,
             )
             LOGGER.info(
                 "Started pyfluidsynth scheduled MIDI playback worker for '%s' "

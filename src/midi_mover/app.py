@@ -135,17 +135,28 @@ def _initialize_pygame_display(config: AppConfig, resources: StartupResources) -
         ) from exc
     try:
         pygame.init()
+        scale_factor = max(0.01, float(config.raw["app"].get("window_scale_factor", 1.0)))
+        base_width = int(config.raw["app"]["window_width"])
+        base_height = int(config.raw["app"]["window_height"])
+        scaled_width = max(1, int(round(base_width * scale_factor)))
+        scaled_height = max(1, int(round(base_height * scale_factor)))
         window = pygame.display.set_mode(
             (
-                int(config.raw["app"]["window_width"]),
-                int(config.raw["app"]["window_height"]),
+                scaled_width,
+                scaled_height,
             )
         )
         pygame.display.set_caption(str(config.raw["app"]["name"]))
     except Exception as exc:
         raise StartupError(f"Failed to initialize pygame display: {exc}") from exc
     resources.window = window
-    LOGGER.info("Initialized pygame display at %sx%s.", *window.get_size())
+    LOGGER.info(
+        "Initialized pygame display at %sx%s (base=%sx%s scale_factor=%s).",
+        *window.get_size(),
+        base_width,
+        base_height,
+        scale_factor,
+    )
     return pygame
 def _initialize_pygame_mixer(config: AppConfig, resources: StartupResources) -> None:
     pygame = resources.pygame_module
@@ -510,14 +521,17 @@ def run_interactive_runtime(
                 return
 
             pre_song_lead_in_ms = float(config.raw["gameplay"].get("pre_song_lead_in_ms", 0))
+            song_speed_multiplier = float(config.raw["gameplay"].get("song_speed_multiplier", 1.0))
             song_started_monotonic = time.monotonic()
             lead_in_seconds = max(0.0, pre_song_lead_in_ms / 1000.0)
             song_audio_start_at_monotonic = song_started_monotonic + lead_in_seconds
             LOGGER.info(
-                "Transitioning from title screen to gameplay state: song='%s' lead_in_ms=%s audio_start_in=%.3fs.",
+                "Transitioning from title screen to gameplay state: song='%s' lead_in_ms=%s "
+                "audio_start_in=%.3fs song_speed_multiplier=%.3f.",
                 selected_song_title,
                 pre_song_lead_in_ms,
                 lead_in_seconds,
+                song_speed_multiplier,
             )
             gameplay_exit_reason, final_score_state = run_persistent_liveview_loop(
                 window=resources.window,
@@ -536,7 +550,11 @@ def run_interactive_runtime(
                 normalized_target_notes=normalized_target_notes,
                 song_started_monotonic=song_started_monotonic,
                 pre_song_lead_in_ms=pre_song_lead_in_ms,
-                song_audio_start=lambda: song_audio_backend.start_song(selected_midi),
+                song_speed_multiplier=song_speed_multiplier,
+                song_audio_start=lambda: song_audio_backend.start_song(
+                    selected_midi,
+                    song_speed_multiplier=song_speed_multiplier,
+                ),
                 song_audio_start_at_monotonic=song_audio_start_at_monotonic,
             )
             try:

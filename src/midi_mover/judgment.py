@@ -136,6 +136,7 @@ class HitWindowJudge:
         transition_snapshot: InteractionTransitionSnapshot,
         song_started_monotonic: float | None,
         pre_song_lead_in_ms: float,
+        song_speed_multiplier: float = 1.0,
     ) -> tuple[JudgedHit, ...]:
         """Consume enter transitions and return newly judged hits for this frame."""
 
@@ -143,6 +144,7 @@ class HitWindowJudge:
             return ()
 
         lead_in_seconds = max(0.0, float(pre_song_lead_in_ms) / 1000.0)
+        speed = max(1e-6, float(song_speed_multiplier))
         new_hits: list[JudgedHit] = []
         now_elapsed_ms: float | None = None
 
@@ -155,7 +157,7 @@ class HitWindowJudge:
                     continue
 
                 event_timestamp_ms = (
-                    (float(event_monotonic) - float(song_started_monotonic) - lead_in_seconds) * 1000.0
+                    (float(event_monotonic) - float(song_started_monotonic) - lead_in_seconds) * 1000.0 * speed
                 )
                 if now_elapsed_ms is None or event_timestamp_ms > now_elapsed_ms:
                     now_elapsed_ms = event_timestamp_ms

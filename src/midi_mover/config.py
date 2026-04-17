@@ -18,6 +18,7 @@ REQUIRED_PATHS: tuple[tuple[str, ...], ...] = (
     ("app", "name"),
     ("app", "window_width"),
     ("app", "window_height"),
+    ("app", "window_scale_factor"),
     ("app", "target_fps"),
     ("app", "song_title_screen_duration_seconds"),
     ("app", "song_summary_screen_duration_seconds"),
@@ -99,6 +100,7 @@ REQUIRED_PATHS: tuple[tuple[str, ...], ...] = (
     ("liveview", "wrist_marker_outline_width"),
     ("liveview", "padding_color"),
     ("gameplay", "hit_window_ms"),
+    ("gameplay", "song_speed_multiplier"),
     ("gameplay", "pre_song_lead_in_ms"),
     ("gameplay", "early_late_tolerance_ms"),
     ("gameplay", "debounce_ms"),
@@ -194,6 +196,9 @@ def _has_path(payload: dict[str, Any], path: tuple[str, ...]) -> bool:
 def _validate_value_types(payload: dict[str, Any]) -> None:
     _require_type(payload["app"]["window_width"], int, "app.window_width")
     _require_type(payload["app"]["window_height"], int, "app.window_height")
+    _require_numeric(payload["app"]["window_scale_factor"], "app.window_scale_factor")
+    if float(payload["app"]["window_scale_factor"]) <= 0.0:
+        raise ConfigError("Config key app.window_scale_factor must be > 0.")
     _require_type(payload["app"]["target_fps"], int, "app.target_fps")
     _require_numeric(
         payload["app"]["song_title_screen_duration_seconds"],
@@ -313,6 +318,9 @@ def _validate_value_types(payload: dict[str, Any]) -> None:
     _require_color_triplet(payload["liveview"]["padding_color"], "liveview.padding_color")
     _validate_circle_visuals(payload["liveview"]["circle_visuals"])
     _require_type(payload["gameplay"]["hit_window_ms"], int, "gameplay.hit_window_ms")
+    _require_numeric(payload["gameplay"]["song_speed_multiplier"], "gameplay.song_speed_multiplier")
+    if float(payload["gameplay"]["song_speed_multiplier"]) <= 0.0:
+        raise ConfigError("Config key gameplay.song_speed_multiplier must be > 0.")
     _require_type(payload["gameplay"]["pre_song_lead_in_ms"], int, "gameplay.pre_song_lead_in_ms")
     _require_type(
         payload["gameplay"]["early_late_tolerance_ms"],
