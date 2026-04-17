@@ -295,7 +295,7 @@ audio:
     release_fade_ms: 120
 
 highscore:
-  list_size: 10
+  list_size: 3
   headshot_countdown_seconds: 3.0
   post_countdown_camera_warmup_frames: 3
   leaderboard_screen_duration_seconds: 3.0
