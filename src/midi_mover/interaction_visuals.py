@@ -283,11 +283,9 @@ class CircleVisualStateTracker:
         circle_geometries: tuple[CircleGeometry, ...],
         gameplay_keypoints: GameplayKeypoints | None,
         interaction_snapshot: InteractionStateSnapshot | None = None,
-        hit_lanes: tuple[int, ...] = (),
-        miss_lanes: tuple[int, ...] = (),
         now_monotonic: float | None = None,
-        # Per-token hits/misses provide more granular flash control when
-        # the caller knows which hand triggered each event.
+        # Flash routing is token-only: each judgment must provide an explicit
+        # hand+lane token (e.g. L3, R4).
         hit_tokens: tuple[str, ...] = (),
         miss_tokens: tuple[str, ...] = (),
         # Tokens whose circles should show the precue state (upcoming note).
@@ -319,26 +317,6 @@ class CircleVisualStateTracker:
             duration_ms=self._miss_flash_duration_ms,
             timestamp=timestamp,
         )
-        # Legacy lane-only flash support: flash both hands' circles for
-        # that lane when no per-token info is available.
-        if not hit_tokens:
-            for lane in hit_lanes:
-                for h in ("L", "R"):
-                    self._flash_states[(h, int(lane))] = CircleFlashState(
-                        lane=int(lane),
-                        hand=h,
-                        state_name="hit_flash",
-                        expires_at_monotonic=timestamp + (self._hit_flash_duration_ms / 1000.0),
-                    )
-        if not miss_tokens:
-            for lane in miss_lanes:
-                for h in ("L", "R"):
-                    self._flash_states[(h, int(lane))] = CircleFlashState(
-                        lane=int(lane),
-                        hand=h,
-                        state_name="miss_flash",
-                        expires_at_monotonic=timestamp + (self._miss_flash_duration_ms / 1000.0),
-                    )
 
         self._flash_states = {
             key: flash

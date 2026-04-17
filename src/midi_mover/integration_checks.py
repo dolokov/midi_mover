@@ -74,7 +74,7 @@ def verify_fingertip_audio_integration() -> None:
     """Verify fingertip events still drive transition + audio hooks correctly."""
 
     circles = (
-        CircleGeometry(lane=1, center_xy=(100.0, 100.0), radius=20, offset_xy=(0.0, 0.0)),
+        CircleGeometry(lane=1, hand="L", center_xy=(100.0, 100.0), radius=20, offset_xy=(0.0, 0.0)),
     )
     left_wrist = KeypointSample(
         name="left_wrist",
@@ -173,7 +173,8 @@ def verify_mirrored_hand_assignment_behavior() -> None:
     """Verify mirrored handedness behavior is deterministic for swap on/off."""
 
     circles = (
-        CircleGeometry(lane=1, center_xy=(100.0, 100.0), radius=20, offset_xy=(0.0, 0.0)),
+        CircleGeometry(lane=1, hand="L", center_xy=(100.0, 100.0), radius=20, offset_xy=(0.0, 0.0)),
+        CircleGeometry(lane=1, hand="R", center_xy=(100.0, 100.0), radius=20, offset_xy=(0.0, 0.0)),
     )
     left_wrist = KeypointSample(
         name="left_wrist",
@@ -272,8 +273,8 @@ def verify_hit_window_judgment_behavior() -> None:
     judge = HitWindowJudge(normalized_target_notes=target_notes, hit_window_ms=120.0)
     transition_tracker = HandCircleTransitionTracker(debounce_ms=0)
     circles = (
-        CircleGeometry(lane=1, center_xy=(100.0, 100.0), radius=20, offset_xy=(0.0, 0.0)),
-        CircleGeometry(lane=2, center_xy=(200.0, 100.0), radius=20, offset_xy=(0.0, 0.0)),
+        CircleGeometry(lane=1, hand="L", center_xy=(100.0, 100.0), radius=20, offset_xy=(0.0, 0.0)),
+        CircleGeometry(lane=2, hand="R", center_xy=(200.0, 100.0), radius=20, offset_xy=(0.0, 0.0)),
     )
 
     left_wrist = KeypointSample(
@@ -457,8 +458,10 @@ def verify_judgment_to_liveview_flash_behavior() -> None:
         ),
     )
     circles = (
-        CircleGeometry(lane=1, center_xy=(100.0, 100.0), radius=20, offset_xy=(0.0, 0.0)),
-        CircleGeometry(lane=2, center_xy=(200.0, 100.0), radius=20, offset_xy=(0.0, 0.0)),
+        CircleGeometry(lane=1, hand="L", center_xy=(100.0, 100.0), radius=20, offset_xy=(0.0, 0.0)),
+        CircleGeometry(lane=1, hand="R", center_xy=(100.0, 100.0), radius=20, offset_xy=(0.0, 0.0)),
+        CircleGeometry(lane=2, hand="L", center_xy=(200.0, 100.0), radius=20, offset_xy=(0.0, 0.0)),
+        CircleGeometry(lane=2, hand="R", center_xy=(200.0, 100.0), radius=20, offset_xy=(0.0, 0.0)),
     )
     left_wrist = KeypointSample(
         name="left_wrist",
@@ -507,30 +510,39 @@ def verify_judgment_to_liveview_flash_behavior() -> None:
         song_started_monotonic=100.0,
         pre_song_lead_in_ms=1000.0,
     )
-    hit_lanes = tuple(sorted({int(hit.lane) for hit in judged_hits}))
+    hit_tokens = tuple(
+        sorted({str(hit.token).strip().upper() for hit in judged_hits if str(hit.token).strip()})
+    )
     hit_states = circle_visual_tracker.update(
         circle_geometries=circles,
         gameplay_keypoints=left_enter_keypoints,
         interaction_snapshot=left_enter_snapshot,
-        hit_lanes=hit_lanes,
-        miss_lanes=(),
+        hit_tokens=hit_tokens,
+        miss_tokens=(),
         now_monotonic=102.0,
     )
-    lane1_state = next((state for state in hit_states if state.lane == 1), None)
-    if lane1_state is None or lane1_state.state_name != "hit_flash":
+    lane1_left_state = next((state for state in hit_states if state.hand == "L" and state.lane == 1), None)
+    lane1_right_state = next((state for state in hit_states if state.hand == "R" and state.lane == 1), None)
+    if lane1_left_state is None or lane1_left_state.state_name != "hit_flash":
         raise RuntimeError(
-            "Judgment-to-liveview integration check failed: expected lane 1 to flash hit on judged hit. "
+            "Judgment-to-liveview integration check failed: expected L1 to flash hit on judged hit. "
+            f"states={hit_states}"
+        )
+    if lane1_right_state is None or lane1_right_state.state_name == "hit_flash":
+        raise RuntimeError(
+            "Judgment-to-liveview integration check failed: R1 must not flash when only L1 is judged hit. "
             f"states={hit_states}"
         )
 
     judge.mark_misses_for_song_elapsed_ms(1400.0)
     missed_note_ids = set(judge.consume_newly_missed_note_ids())
-    miss_lanes = tuple(
+    miss_tokens = tuple(
         sorted(
             {
-                int(note.lane)
+                str(note.token).strip().upper()
                 for note in target_notes
                 if note.target_note_id in missed_note_ids
+                and str(note.token).strip()
             }
         )
     )
@@ -552,14 +564,20 @@ def verify_judgment_to_liveview_flash_behavior() -> None:
         circle_geometries=circles,
         gameplay_keypoints=no_contact_keypoints,
         interaction_snapshot=no_contact_snapshot,
-        hit_lanes=(),
-        miss_lanes=miss_lanes,
+        hit_tokens=(),
+        miss_tokens=miss_tokens,
         now_monotonic=102.3,
     )
-    lane2_state = next((state for state in miss_states if state.lane == 2), None)
-    if lane2_state is None or lane2_state.state_name != "miss_flash":
+    lane2_right_state = next((state for state in miss_states if state.hand == "R" and state.lane == 2), None)
+    lane2_left_state = next((state for state in miss_states if state.hand == "L" and state.lane == 2), None)
+    if lane2_right_state is None or lane2_right_state.state_name != "miss_flash":
         raise RuntimeError(
-            "Judgment-to-liveview integration check failed: expected lane 2 to flash miss on judged miss. "
+            "Judgment-to-liveview integration check failed: expected R2 to flash miss on judged miss. "
+            f"states={miss_states}"
+        )
+    if lane2_left_state is None or lane2_left_state.state_name == "miss_flash":
+        raise RuntimeError(
+            "Judgment-to-liveview integration check failed: L2 must not flash when only R2 is judged miss. "
             f"states={miss_states}"
         )
 

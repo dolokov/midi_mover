@@ -297,6 +297,7 @@ audio:
 highscore:
   list_size: 10
   headshot_countdown_seconds: 3.0
+  post_countdown_camera_warmup_frames: 3
   leaderboard_screen_duration_seconds: 3.0
   headshot_crop_margin: 0.35
   thumbnail_width: 160

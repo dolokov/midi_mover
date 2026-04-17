@@ -172,8 +172,8 @@ def render_liveview_frame(
         resolved_swap_hands,
     )
     transition_snapshot = interaction_transition_tracker.update(interaction_snapshot)
-    judged_hit_lanes: tuple[int, ...] = ()
-    judged_miss_lanes: tuple[int, ...] = ()
+    judged_hit_tokens: tuple[str, ...] = ()
+    judged_miss_tokens: tuple[str, ...] = ()
     if hit_window_judge is not None:
         judged_hits = hit_window_judge.register_transition_snapshot(
             transition_snapshot=transition_snapshot,
@@ -187,16 +187,19 @@ def render_liveview_frame(
         if gameplay_score_tracker is not None:
             gameplay_score_tracker.register_hits(judged_hits)
             gameplay_score_tracker.sync_total_misses(hit_window_judge.miss_count())
-        judged_hit_lanes = tuple(sorted({int(hit.lane) for hit in judged_hits}))
+        judged_hit_tokens = tuple(
+            sorted({str(hit.token).strip().upper() for hit in judged_hits if str(hit.token).strip()})
+        )
         newly_missed_note_ids = hit_window_judge.consume_newly_missed_note_ids()
         if newly_missed_note_ids:
             missed_note_id_set = set(newly_missed_note_ids)
-            judged_miss_lanes = tuple(
+            judged_miss_tokens = tuple(
                 sorted(
                     {
-                        int(getattr(note, "lane", 0))
+                        str(getattr(note, "token", "")).strip().upper()
                         for note in normalized_target_notes
                         if str(getattr(note, "target_note_id", "")) in missed_note_id_set
+                        and str(getattr(note, "token", "")).strip()
                     }
                 )
             )
@@ -227,8 +230,8 @@ def render_liveview_frame(
         circle_geometries=circle_geometries,
         gameplay_keypoints=gameplay_keypoints,
         interaction_snapshot=interaction_snapshot,
-        hit_lanes=judged_hit_lanes,
-        miss_lanes=judged_miss_lanes,
+        hit_tokens=judged_hit_tokens,
+        miss_tokens=judged_miss_tokens,
         precue_tokens=precue_tokens,
     )
     target_layout = compute_liveview_layout(
