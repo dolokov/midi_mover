@@ -217,23 +217,73 @@ This exact structure is not mandatory, but the implementation should keep respon
 Use the Conda environment named:
 
 ```bash
-conda create -n midi_mover python=3.11 -y
+conda create -n midi_mover python=3.10 -y
 conda activate midi_mover
 ```
 
-Install the required packages inside that environment.
+Install dependencies inside that environment.
 
-A likely starting point is:
+### 1) Install PyTorch (CUDA example)
 
 ```bash
 python -m pip install torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0 \
   --index-url https://download.pytorch.org/whl/cu128
-
-python -m pip install ultralytics
-pip install ultralytics opencv-python pygame mido pyyaml pillow numpy
-conda install setuptools tensorboard
-
 ```
+
+### 2) Install Python packages (including pyfluidsynth)
+
+```bash
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install ultralytics opencv-python pygame mido pyyaml pillow numpy pyfluidsynth tensorboard
+```
+
+### 3) Install native FluidSynth library (required)
+
+`pyfluidsynth` is only a Python binding. The app uses `audio.backend: pyfluidsynth` by default, so the native FluidSynth shared library must also be installed.
+
+On Debian/Ubuntu:
+
+```bash
+sudo apt update
+sudo apt install -y fluidsynth libfluidsynth3 libfluidsynth-dev
+```
+
+If you see this runtime error:
+
+```text
+ImportError: Couldn't find the FluidSynth library.
+```
+
+it means the native library is missing or not visible to the current environment.
+
+### 4) Verify pyfluidsynth can load the native library
+
+```bash
+python -c "import fluidsynth; s=fluidsynth.Synth(); s.delete(); print('pyfluidsynth OK')"
+```
+
+### 5) Start the app
+
+Smoke test path:
+
+```bash
+python main.py --smoke-test
+```
+
+Normal run:
+
+```bash
+python main.py --camera-id 0 --midi-dir /home/alex/data/midi_mover/midis --config config/default.yaml
+```
+
+### Notes
+
+- Target-song output is expected to run through **pyfluidsynth** (no pygame fallback for song output).
+- Ensure these YAML paths exist and are correct for your machine:
+  - `pose.stage2_hand_model_name`
+  - `audio.fluidsynth.soundfont_path`
+  - MIDI directory passed via `--midi-dir`
+- On first run, Ultralytics may download `yolo11n-pose.pt` automatically.
 
 If extra packages are required during implementation, document them and keep the environment reproducible.
 
