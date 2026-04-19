@@ -154,22 +154,22 @@ midi:
   supported_extensions: [".mid", ".midi"]
   note_mapping:
     "60": L1
-    "61": L2
-    "62": L3
-    "63": L4
-    "64": L5
-    "65": R1
-    "66": R2
-    "67": R3
-    "68": R4
+    "61": R1
+    "62": L2
+    "63": R2
+    "64": L3
+    "65": R3
+    "66": L4
+    "67": R4
+    "68": L5
     "69": R5
   track_filter: []
   channel_filter: []
   minimum_note_duration_ms: 40
   ignore_meta_events: true
   adaptive_mapping:
-    enabled: false
-    trigger_note_count: 10
+    enabled: true
+    trigger_note_count: 1
     rolling_recent_note_buffer_size: 30
     mode: ranked_low_high
     creative_seed: 123

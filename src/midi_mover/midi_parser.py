@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from bisect import bisect_right
-from collections import deque
 from dataclasses import dataclass
 import math
 from pathlib import Path
@@ -559,22 +558,26 @@ def _build_adaptive_token_sequence(
 ) -> tuple[str, ...]:
     if rolling_recent_note_buffer_size < 1:
         raise MidiParseError("rolling_recent_note_buffer_size must be >= 1.")
+    _ = rolling_recent_note_buffer_size
 
-    recent_note_numbers: deque[int] = deque(maxlen=rolling_recent_note_buffer_size)
     token_sequence: list[str] = []
     token_count = len(GESTURE_TOKENS)
     creative_rng = Random(creative_seed) if creative_seed is not None else None
+    unique_note_numbers = sorted({note.note_number for note in playable_notes})
+    if not unique_note_numbers:
+        return tuple()
+    if len(unique_note_numbers) <= 1:
+        base_token_by_note = {unique_note_numbers[0]: 0}
+    else:
+        divisor = len(unique_note_numbers) - 1
+        base_token_by_note = {
+            note_number: int(round((rank * (token_count - 1)) / divisor))
+            for rank, note_number in enumerate(unique_note_numbers)
+        }
 
     for note_index, playable_note in enumerate(playable_notes):
         note_number = playable_note.note_number
-        recent_note_numbers.append(note_number)
-
-        ranked_recent_notes = sorted(set(recent_note_numbers))
-        rank = ranked_recent_notes.index(note_number)
-        if len(ranked_recent_notes) <= token_count:
-            token_index = rank
-        else:
-            token_index = int(round((rank * (token_count - 1)) / (len(ranked_recent_notes) - 1)))
+        token_index = base_token_by_note[note_number]
 
         if adaptive_mode_variant == "creative_wave":
             phase = (note_index % creative_cycle_span) / float(creative_cycle_span)
