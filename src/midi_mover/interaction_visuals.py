@@ -34,6 +34,18 @@ class CircleVisualState:
     hand: str  # "L" or "R"
     state_name: CircleVisualStateName
     active_hands: tuple[str, ...]
+    precue_urgency: float = 0.0
+    is_primary_precue: bool = False
+
+
+@dataclass(frozen=True)
+class PrecueVisualHint:
+    """Continuous pre-cue metadata for one gesture token."""
+
+    token: str
+    urgency: float
+    time_to_note_ms: float
+    is_primary: bool = False
 
 
 @dataclass(frozen=True)
@@ -290,6 +302,8 @@ class CircleVisualStateTracker:
         miss_tokens: tuple[str, ...] = (),
         # Tokens whose circles should show the precue state (upcoming note).
         precue_tokens: tuple[str, ...] = (),
+        # Optional continuous urgency metadata per token.
+        precue_hints: tuple[PrecueVisualHint, ...] = (),
     ) -> tuple[CircleVisualState, ...]:
         timestamp = time.monotonic() if now_monotonic is None else float(now_monotonic)
         interactions = interaction_snapshot
@@ -325,16 +339,42 @@ class CircleVisualStateTracker:
         }
         self._previous_contacts = current_contacts
 
-        # Normalise precue_tokens into a fast lookup set of (hand, lane) pairs.
-        precue_set: set[tuple[str, int]] = set()
-        for token in precue_tokens:
-            token_s = str(token).strip()
+        # Normalise precue hints into a lookup keyed by (hand, lane).
+        precue_by_key: dict[tuple[str, int], PrecueVisualHint] = {}
+        for hint in precue_hints:
+            token_s = str(hint.token).strip()
             if len(token_s) < 2:
                 continue
             hand_char = token_s[0].upper()
             lane_str = token_s[1:]
-            if hand_char in ("L", "R") and lane_str.isdigit():
-                precue_set.add((hand_char, int(lane_str)))
+            if hand_char not in ("L", "R") or not lane_str.isdigit():
+                continue
+            key = (hand_char, int(lane_str))
+            previous = precue_by_key.get(key)
+            if previous is None or float(hint.urgency) > float(previous.urgency):
+                precue_by_key[key] = PrecueVisualHint(
+                    token=f"{hand_char}{int(lane_str)}",
+                    urgency=max(0.0, min(1.0, float(hint.urgency))),
+                    time_to_note_ms=float(hint.time_to_note_ms),
+                    is_primary=bool(hint.is_primary),
+                )
+
+        # Backward-compatible token-only precue fallback.
+        if not precue_by_key:
+            for token in precue_tokens:
+                token_s = str(token).strip()
+                if len(token_s) < 2:
+                    continue
+                hand_char = token_s[0].upper()
+                lane_str = token_s[1:]
+                if hand_char in ("L", "R") and lane_str.isdigit():
+                    key = (hand_char, int(lane_str))
+                    precue_by_key[key] = PrecueVisualHint(
+                        token=f"{hand_char}{int(lane_str)}",
+                        urgency=0.0,
+                        time_to_note_ms=0.0,
+                        is_primary=False,
+                    )
 
         resolved_states: list[CircleVisualState] = []
         for contact in contacts:
@@ -345,17 +385,24 @@ class CircleVisualStateTracker:
             elif contact.active_hands:
                 # Hand is physically inside the circle.
                 state_name = "active_contact"
-            elif (contact.hand, contact.lane) in precue_set:
+            elif (contact.hand, contact.lane) in precue_by_key:
                 # Upcoming note within the precue window.
                 state_name = "precue"
             else:
                 state_name = "idle"
+            precue_hint = precue_by_key.get((contact.hand, contact.lane))
             resolved_states.append(
                 CircleVisualState(
                     lane=contact.lane,
                     hand=contact.hand,
                     state_name=state_name,
                     active_hands=contact.active_hands,
+                    precue_urgency=(
+                        max(0.0, min(1.0, float(precue_hint.urgency)))
+                        if precue_hint is not None
+                        else 0.0
+                    ),
+                    is_primary_precue=bool(precue_hint.is_primary) if precue_hint is not None else False,
                 )
             )
         return tuple(resolved_states)

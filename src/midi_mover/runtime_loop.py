@@ -39,6 +39,10 @@ from midi_mover.timeline import (
     draw_timeline_panel_layout,
     draw_upcoming_timeline_notes,
 )
+from midi_mover.runtime_helpers import (
+    compute_precue_hints,
+    extract_stage1_keypoints_for_selection,
+)
 
 LOGGER = logging.getLogger("midi_mover")
 _LAST_STAGE2_HAND_INFERENCE: HandRoiInference | None = None
@@ -129,7 +133,7 @@ def render_liveview_frame(
         raise LiveviewRuntimeError(f"Liveview rendering failed during pose inference: {exc}") from exc
 
     selection = primary_person_tracker.select(pose_result)
-    stage1_keypoints_xy, stage1_keypoints_conf = _extract_stage1_keypoints_for_selection(
+    stage1_keypoints_xy, stage1_keypoints_conf = extract_stage1_keypoints_for_selection(
         result=pose_result,
         selection=selection,
     )
@@ -226,7 +230,7 @@ def render_liveview_frame(
             transition_snapshot=transition_snapshot,
             gesture_sounds=gesture_sounds,
         )
-    precue_tokens = _compute_precue_tokens(
+    precue_hints = compute_precue_hints(
         normalized_target_notes=normalized_target_notes,
         song_started_monotonic=song_started_monotonic,
         pre_song_lead_in_ms=pre_song_lead_in_ms,
@@ -235,6 +239,7 @@ def render_liveview_frame(
         hit_window_ms=float(config.raw["gameplay"]["hit_window_ms"]),
         hit_window_judge=hit_window_judge,
     )
+    precue_tokens = tuple(hint.token for hint in precue_hints)
     circle_visual_states = circle_visual_tracker.update(
         circle_geometries=circle_geometries,
         gameplay_keypoints=gameplay_keypoints,
@@ -242,6 +247,7 @@ def render_liveview_frame(
         hit_tokens=judged_hit_tokens,
         miss_tokens=judged_miss_tokens,
         precue_tokens=precue_tokens,
+        precue_hints=precue_hints,
     )
     target_layout = compute_liveview_layout(
         frame_width=frame.width,
@@ -323,6 +329,22 @@ def render_liveview_frame(
         label_font_size=int(config.raw["liveview"]["label_font_size"]),
         contact_stroke_color=tuple(circle_visuals_cfg.get("contact_stroke_color", [0, 255, 255])),
         contact_stroke_width=int(circle_visuals_cfg.get("contact_stroke_width", 6)),
+        precue_gradient_start_color=tuple(
+            circle_visuals_cfg.get("precue_gradient_start_color", [59, 130, 246])
+        ),
+        precue_gradient_end_color=tuple(
+            circle_visuals_cfg.get("precue_gradient_end_color", [250, 204, 21])
+        ),
+        precue_min_stroke_width=int(circle_visuals_cfg.get("precue_min_stroke_width", 2)),
+        precue_max_stroke_width=int(circle_visuals_cfg.get("precue_max_stroke_width", 7)),
+        precue_min_fill_alpha=float(circle_visuals_cfg.get("precue_min_fill_alpha", 0.20)),
+        precue_max_fill_alpha=float(circle_visuals_cfg.get("precue_max_fill_alpha", 0.70)),
+        precue_primary_outline_color=tuple(
+            circle_visuals_cfg.get("precue_primary_outline_color", [255, 255, 255])
+        ),
+        precue_primary_outline_extra_width=int(
+            circle_visuals_cfg.get("precue_primary_outline_extra_width", 2)
+        ),
         show_head_center_marker=bool(config.raw["liveview"]["debug"]["show_head_center"]),
         show_wrist_markers=bool(config.raw["liveview"]["debug"]["show_wrist_markers"]),
         wrist_marker_radius=int(config.raw["liveview"]["wrist_marker_radius"]),
@@ -587,104 +609,3 @@ def _format_primary_person_log(selection: PrimaryPersonSelection | None) -> str:
         f"index={candidate.index} track_id={candidate.track_id} area={candidate.area:.1f} "
         f"confidence={candidate.confidence:.3f} reason={selection.reason}"
     )
-
-
-def _extract_stage1_keypoints_for_selection(
-    *,
-    result: Any,
-    selection: PrimaryPersonSelection | None,
-) -> tuple[tuple[tuple[float, float], ...], tuple[float, ...]]:
-    if result is None or selection is None:
-        return (), ()
-
-    keypoints = getattr(result, "keypoints", None)
-    if keypoints is None:
-        return (), ()
-
-    keypoints_xy = _to_rows(getattr(keypoints, "xy", None))
-    keypoints_conf = _to_rows(getattr(keypoints, "conf", None))
-    person_index = int(selection.candidate.index)
-    if person_index < 0 or person_index >= len(keypoints_xy):
-        return (), ()
-
-    xy_row = keypoints_xy[person_index]
-    conf_row = keypoints_conf[person_index] if person_index < len(keypoints_conf) else []
-    normalized_xy: list[tuple[float, float]] = []
-    for point in xy_row:
-        if not isinstance(point, (list, tuple)) or len(point) < 2:
-            continue
-        normalized_xy.append((float(point[0]), float(point[1])))
-    normalized_conf = tuple(float(value) for value in conf_row)
-    return tuple(normalized_xy), normalized_conf
-
-
-def _to_rows(value: Any) -> list[list[Any]]:
-    if value is None:
-        return []
-    if hasattr(value, "cpu"):
-        value = value.cpu()
-    if hasattr(value, "numpy"):
-        value = value.numpy()
-    if hasattr(value, "tolist"):
-        value = value.tolist()
-    if value is None or not isinstance(value, list):
-        return []
-    rows: list[list[Any]] = []
-    for row in value:
-        if isinstance(row, (list, tuple)):
-            rows.append(list(row))
-        else:
-            rows.append([row])
-    return rows
-
-
-def _compute_precue_tokens(
-    *,
-    normalized_target_notes: tuple[Any, ...],
-    song_started_monotonic: float | None,
-    pre_song_lead_in_ms: float,
-    song_speed_multiplier: float,
-    precue_ms: float,
-    hit_window_ms: float,
-    hit_window_judge: HitWindowJudge | None,
-) -> tuple[str, ...]:
-    """Return gesture tokens for notes that are within the precue window.
-
-    A note enters the precue window ``precue_ms`` before its target hit time
-    and leaves when the hit window closes (``note_time + hit_window_ms``).
-    Already-judged notes (hit or missed) are excluded so the circle doesn't
-    keep glowing after the note has been resolved.
-    """
-
-    if not normalized_target_notes or song_started_monotonic is None or precue_ms <= 0.0:
-        return ()
-
-    lead_in_seconds = max(0.0, float(pre_song_lead_in_ms) / 1000.0)
-    safe_song_speed = max(1e-6, float(song_speed_multiplier))
-    song_elapsed_ms = (
-        (time.monotonic() - float(song_started_monotonic) - lead_in_seconds)
-        * 1000.0
-        * safe_song_speed
-    )
-
-    already_judged: frozenset[str] = frozenset()
-    if hit_window_judge is not None:
-        already_judged = hit_window_judge.matched_note_ids | hit_window_judge.missed_note_ids
-
-    tokens: list[str] = []
-    seen_tokens: set[str] = set()
-    for note in normalized_target_notes:
-        note_id = str(getattr(note, "target_note_id", ""))
-        if note_id and note_id in already_judged:
-            continue
-        note_ts_ms = float(getattr(note, "timestamp_ms", 0.0))
-        # Precue window: [note_ts - precue_ms, note_ts + hit_window_ms]
-        if song_elapsed_ms < (note_ts_ms - precue_ms):
-            continue
-        if song_elapsed_ms > (note_ts_ms + hit_window_ms):
-            continue
-        token = str(getattr(note, "token", ""))
-        if token and token not in seen_tokens:
-            tokens.append(token)
-            seen_tokens.add(token)
-    return tuple(tokens)

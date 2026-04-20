@@ -569,6 +569,50 @@ def _validate_circle_visuals(circle_visuals: dict[str, Any]) -> None:
         int,
         "liveview.circle_visuals.miss_flash_duration_ms",
     )
+    # Optional continuous precue styling controls.
+    if "precue_gradient_start_color" in circle_visuals:
+        _require_color_triplet(
+            circle_visuals["precue_gradient_start_color"],
+            "liveview.circle_visuals.precue_gradient_start_color",
+        )
+    if "precue_gradient_end_color" in circle_visuals:
+        _require_color_triplet(
+            circle_visuals["precue_gradient_end_color"],
+            "liveview.circle_visuals.precue_gradient_end_color",
+        )
+    if "precue_min_stroke_width" in circle_visuals:
+        _require_type(
+            circle_visuals["precue_min_stroke_width"],
+            int,
+            "liveview.circle_visuals.precue_min_stroke_width",
+        )
+    if "precue_max_stroke_width" in circle_visuals:
+        _require_type(
+            circle_visuals["precue_max_stroke_width"],
+            int,
+            "liveview.circle_visuals.precue_max_stroke_width",
+        )
+    if "precue_min_fill_alpha" in circle_visuals:
+        _require_numeric(
+            circle_visuals["precue_min_fill_alpha"],
+            "liveview.circle_visuals.precue_min_fill_alpha",
+        )
+    if "precue_max_fill_alpha" in circle_visuals:
+        _require_numeric(
+            circle_visuals["precue_max_fill_alpha"],
+            "liveview.circle_visuals.precue_max_fill_alpha",
+        )
+    if "precue_primary_outline_color" in circle_visuals:
+        _require_color_triplet(
+            circle_visuals["precue_primary_outline_color"],
+            "liveview.circle_visuals.precue_primary_outline_color",
+        )
+    if "precue_primary_outline_extra_width" in circle_visuals:
+        _require_type(
+            circle_visuals["precue_primary_outline_extra_width"],
+            int,
+            "liveview.circle_visuals.precue_primary_outline_extra_width",
+        )
 def _validate_gesture_sounds(gesture_sounds: dict[str, Any], *, circles_per_hand: int) -> None:
     validate_gesture_sounds(
         gesture_sounds=gesture_sounds,

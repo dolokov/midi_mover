@@ -10,6 +10,17 @@ from midi_mover.keypoint_overlay import (
     draw_stage1_full_keypoints,
     draw_stage2_full_keypoints,
 )
+from midi_mover.liveview_overlay_helpers import (
+    blend_rgb,
+    clamp01,
+    crop_center_distance,
+    draw_circle_label,
+    draw_keypoint_overlay_legend,
+    draw_wrist_markers,
+    get_overlay_font,
+    lerp,
+    lerp_color,
+)
 from midi_mover.pose import GameplayKeypoints, PrimaryPersonSelection
 
 
@@ -49,7 +60,7 @@ class CropSmoother:
     """Smooth crop movement while keeping large player motion responsive."""
 
     def __init__(self, *, smoothing_factor: float, max_jump_ratio: float) -> None:
-        self._smoothing_factor = _clamp01(smoothing_factor)
+        self._smoothing_factor = clamp01(smoothing_factor)
         self._max_jump_ratio = max(0.0, float(max_jump_ratio))
         self._state: SmoothedCropState | None = None
 
@@ -73,17 +84,17 @@ class CropSmoother:
 
         previous = self._state.crop
         jump_threshold = max(frame_width, frame_height) * self._max_jump_ratio
-        center_jump = _crop_center_distance(previous, target_crop)
+        center_jump = crop_center_distance(previous, target_crop)
 
         if center_jump > jump_threshold:
             smoothed = target_crop
         else:
             alpha = self._smoothing_factor
             smoothed = CropRect(
-                x=int(round(_lerp(previous.x, target_crop.x, alpha))),
-                y=int(round(_lerp(previous.y, target_crop.y, alpha))),
-                width=max(1, int(round(_lerp(previous.width, target_crop.width, alpha)))),
-                height=max(1, int(round(_lerp(previous.height, target_crop.height, alpha)))),
+                x=int(round(lerp(previous.x, target_crop.x, alpha))),
+                y=int(round(lerp(previous.y, target_crop.y, alpha))),
+                width=max(1, int(round(lerp(previous.width, target_crop.width, alpha)))),
+                height=max(1, int(round(lerp(previous.height, target_crop.height, alpha)))),
             )
 
         clamped = clamp_crop_rect(smoothed, frame_width=frame_width, frame_height=frame_height)
@@ -337,6 +348,14 @@ def draw_liveview_overlay(
     # Cyan stroke drawn on top when the player's hand is inside the circle.
     contact_stroke_color: tuple[int, int, int] = (0, 255, 255),
     contact_stroke_width: int = 6,
+    precue_gradient_start_color: tuple[int, int, int] = (59, 130, 246),
+    precue_gradient_end_color: tuple[int, int, int] = (250, 204, 21),
+    precue_min_stroke_width: int = 2,
+    precue_max_stroke_width: int = 7,
+    precue_min_fill_alpha: float = 0.20,
+    precue_max_fill_alpha: float = 0.70,
+    precue_primary_outline_color: tuple[int, int, int] = (255, 255, 255),
+    precue_primary_outline_extra_width: int = 2,
     show_stage1_full_keypoints: bool = False,
     stage1_keypoints_xy: tuple[tuple[float, float], ...] = (),
     stage1_keypoints_conf: tuple[float, ...] = (),
@@ -377,7 +396,7 @@ def draw_liveview_overlay(
         pygame_module.draw.circle(surface, (250, 204, 21), (head_x, head_y), 6)
 
     if show_wrist_markers:
-        _draw_wrist_markers(
+        draw_wrist_markers(
             surface,
             pygame_module,
             gameplay_keypoints=gameplay_keypoints,
@@ -415,7 +434,7 @@ def draw_liveview_overlay(
     if not circle_geometries:
         return
 
-    font = _get_overlay_font(pygame_module, label_font_size)
+    font = get_overlay_font(pygame_module, label_font_size)
     scaled_stroke_width = max(1, int(round(circle_stroke_width * min(scale_x, scale_y))))
     # Key by (hand, lane) to support separate L and R circles per lane.
     circle_states_by_key = {(state.hand, state.lane): state for state in circle_visual_states}
@@ -442,20 +461,46 @@ def draw_liveview_overlay(
         style = default_style
         if circle_visual_styles is not None:
             style = circle_visual_styles.get(state_name, default_style)
+
+        fill_color = style.fill_color
+        outline_color = style.outline_color
+        stroke_width = scaled_stroke_width
+        if visual_state is not None and state_name == "precue":
+            urgency = clamp01(float(getattr(visual_state, "precue_urgency", 0.0)))
+            outline_color = lerp_color(precue_gradient_start_color, precue_gradient_end_color, urgency)
+            max_stroke = max(precue_min_stroke_width, precue_max_stroke_width)
+            stroke_units = lerp(float(precue_min_stroke_width), float(max_stroke), urgency)
+            stroke_width = max(1, int(round(stroke_units * min(scale_x, scale_y))))
+            alpha = lerp(float(precue_min_fill_alpha), float(precue_max_fill_alpha), urgency)
+            alpha = max(0.0, min(1.0, alpha))
+            fill_color = blend_rgb(style.fill_color, outline_color, alpha)
+
         fill_rect = pygame_module.Rect(
             circle_x - circle_radius,
             circle_y - circle_radius,
             circle_radius * 2,
             circle_radius * 2,
         )
-        pygame_module.draw.ellipse(surface, style.fill_color, fill_rect)
+        pygame_module.draw.ellipse(surface, fill_color, fill_rect)
         pygame_module.draw.circle(
             surface,
-            style.outline_color,
+            outline_color,
             (circle_x, circle_y),
             circle_radius,
-            width=scaled_stroke_width,
+            width=stroke_width,
         )
+        if visual_state is not None and state_name == "precue" and visual_state.is_primary_precue:
+            primary_width = max(
+                stroke_width,
+                stroke_width + max(0, int(round(precue_primary_outline_extra_width * min(scale_x, scale_y)))),
+            )
+            pygame_module.draw.circle(
+                surface,
+                precue_primary_outline_color,
+                (circle_x, circle_y),
+                max(1, circle_radius + max(1, primary_width // 2)),
+                width=primary_width,
+            )
         # Draw cyan contact stroke on top whenever the hand is inside the
         # circle.  This overlays any state-based outline so it is always
         # readable regardless of the current visual state.
@@ -471,7 +516,7 @@ def draw_liveview_overlay(
         # Label shows the full token (e.g. "L3" or "R5") so both the hand
         # side and the lane number are immediately readable in the overlay.
         token_label = f"{hand}{circle.lane}" if hand else str(circle.lane)
-        _draw_circle_label(
+        draw_circle_label(
             surface,
             pygame_module,
             font,
@@ -482,7 +527,7 @@ def draw_liveview_overlay(
         )
 
     if show_keypoint_overlay_legend:
-        _draw_keypoint_overlay_legend(
+        draw_keypoint_overlay_legend(
             surface,
             pygame_module,
             show_stage1_full_keypoints=show_stage1_full_keypoints,
@@ -493,170 +538,3 @@ def draw_liveview_overlay(
             style=keypoint_overlay_legend_style,
         )
 
-
-def _get_overlay_font(pygame_module: Any, label_font_size: int) -> Any:
-    pygame_module.font.init()
-    return pygame_module.font.Font(None, max(12, int(label_font_size)))
-
-
-def _draw_wrist_markers(
-    surface: Any,
-    pygame_module: Any,
-    *,
-    gameplay_keypoints: Any,
-    crop_origin: tuple[int, int],
-    scale_x: float,
-    scale_y: float,
-    wrist_marker_radius: int,
-    wrist_marker_outline_width: int,
-) -> None:
-    marker_specs = (
-        (getattr(gameplay_keypoints, "left_wrist", None), "L", (248, 113, 113), (127, 29, 29)),
-        (getattr(gameplay_keypoints, "right_wrist", None), "R", (52, 211, 153), (6, 78, 59)),
-    )
-    crop_x, crop_y = crop_origin
-    font = _get_overlay_font(pygame_module, max(14, wrist_marker_radius * 2))
-    scaled_radius = max(4, int(round(wrist_marker_radius * min(scale_x, scale_y))))
-    scaled_outline = max(1, int(round(wrist_marker_outline_width * min(scale_x, scale_y))))
-
-    for sample, label, fill_color, outline_color in marker_specs:
-        if sample is None:
-            continue
-        marker_x = int((sample.xy[0] - crop_x) * scale_x)
-        marker_y = int((sample.xy[1] - crop_y) * scale_y)
-        pygame_module.draw.circle(surface, fill_color, (marker_x, marker_y), scaled_radius)
-        pygame_module.draw.circle(
-            surface,
-            outline_color,
-            (marker_x, marker_y),
-            scaled_radius,
-            width=scaled_outline,
-        )
-        text_surface = font.render(label, True, (255, 255, 255))
-        text_rect = text_surface.get_rect(center=(marker_x, marker_y))
-        surface.blit(text_surface, text_rect)
-
-
-def _draw_circle_label(
-    surface: Any,
-    pygame_module: Any,
-    font: Any,
-    *,
-    label: str,
-    center_xy: tuple[int, int],
-    circle_radius: int,
-    label_color: tuple[int, int, int],
-) -> None:
-    text_surface = font.render(label, True, label_color)
-    text_rect = text_surface.get_rect(center=center_xy)
-    padding = max(4, circle_radius // 6)
-    background_rect = text_rect.inflate(padding * 2, padding)
-    pygame_module.draw.rect(surface, (15, 23, 42), background_rect, border_radius=max(6, padding))
-    surface.blit(text_surface, text_rect)
-
-
-def _draw_keypoint_overlay_legend(
-    surface: Any,
-    pygame_module: Any,
-    *,
-    show_stage1_full_keypoints: bool,
-    show_stage2_hand_keypoints: bool,
-    stage1_keypoints_conf: tuple[float, ...],
-    stage2_hand_keypoints_conf: tuple[tuple[float, ...], ...],
-    show_overlay_confidence_values: bool,
-    style: dict[str, Any] | None,
-) -> None:
-    style_payload = style or {}
-    font_size = int(style_payload.get("font_size", 18))
-    text_color = tuple(style_payload.get("text_color", [226, 232, 240]))
-    muted_text_color = tuple(style_payload.get("muted_text_color", [148, 163, 184]))
-    background_color = tuple(style_payload.get("background_color", [2, 6, 23]))
-    border_color = tuple(style_payload.get("border_color", [51, 65, 85]))
-    border_width = max(0, int(style_payload.get("border_width", 1)))
-    panel_padding = max(2, int(style_payload.get("panel_padding", 8)))
-    line_spacing = max(0, int(style_payload.get("line_spacing", 4)))
-
-    font = _get_overlay_font(pygame_module, font_size)
-    lines = [
-        ("Keypoint overlays", text_color),
-        (
-            f"Stage-1 full body: {'ON' if show_stage1_full_keypoints else 'OFF'}",
-            text_color if show_stage1_full_keypoints else muted_text_color,
-        ),
-        (
-            f"Stage-2 hand: {'ON' if show_stage2_hand_keypoints else 'OFF'}",
-            text_color if show_stage2_hand_keypoints else muted_text_color,
-        ),
-        (
-            f"Confidence text: {'ON' if show_overlay_confidence_values else 'OFF'}",
-            text_color if show_overlay_confidence_values else muted_text_color,
-        ),
-    ]
-
-    if show_overlay_confidence_values:
-        stage1_avg_conf = _average_confidence(stage1_keypoints_conf)
-        stage2_avg_conf = _average_confidence(
-            tuple(value for row in stage2_hand_keypoints_conf for value in row)
-        )
-        lines.append(
-            (
-                f"Stage-1 avg conf: {stage1_avg_conf:.2f}" if stage1_avg_conf is not None else "Stage-1 avg conf: n/a",
-                muted_text_color,
-            )
-        )
-        lines.append(
-            (
-                f"Stage-2 avg conf: {stage2_avg_conf:.2f}" if stage2_avg_conf is not None else "Stage-2 avg conf: n/a",
-                muted_text_color,
-            )
-        )
-
-    rendered = [font.render(text, True, color) for text, color in lines]
-    max_width = max((item.get_width() for item in rendered), default=0)
-    content_height = sum(item.get_height() for item in rendered)
-    content_height += line_spacing * max(0, len(rendered) - 1)
-    panel_rect = pygame_module.Rect(
-        panel_padding,
-        panel_padding,
-        max_width + panel_padding * 2,
-        content_height + panel_padding * 2,
-    )
-    pygame_module.draw.rect(surface, background_color, panel_rect, border_radius=8)
-    if border_width > 0:
-        pygame_module.draw.rect(
-            surface,
-            border_color,
-            panel_rect,
-            width=border_width,
-            border_radius=8,
-        )
-
-    text_y = panel_rect.y + panel_padding
-    for item in rendered:
-        surface.blit(item, (panel_rect.x + panel_padding, text_y))
-        text_y += item.get_height() + line_spacing
-
-
-def _average_confidence(values: tuple[float, ...]) -> float | None:
-    filtered = [float(value) for value in values if float(value) > 0.0]
-    if not filtered:
-        return None
-    return sum(filtered) / len(filtered)
-
-
-def _lerp(start: int | float, end: int | float, alpha: float) -> float:
-    return float(start) + (float(end) - float(start)) * float(alpha)
-
-
-def _crop_center_distance(first: CropRect, second: CropRect) -> float:
-    first_center_x = first.x + first.width / 2.0
-    first_center_y = first.y + first.height / 2.0
-    second_center_x = second.x + second.width / 2.0
-    second_center_y = second.y + second.height / 2.0
-    dx = second_center_x - first_center_x
-    dy = second_center_y - first_center_y
-    return (dx * dx + dy * dy) ** 0.5
-
-
-def _clamp01(value: float) -> float:
-    return max(0.0, min(1.0, float(value)))

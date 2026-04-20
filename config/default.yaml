@@ -71,6 +71,16 @@ liveview:
     # currently inside.  Width is in source-frame pixels (scaled with display).
     contact_stroke_color: [0, 255, 255]
     contact_stroke_width: 6
+    # Continuous pre-cue styling: urgency interpolates smoothly from start->end.
+    precue_gradient_start_color: [59, 130, 246]
+    precue_gradient_end_color: [250, 204, 21]
+    precue_min_stroke_width: 2
+    precue_max_stroke_width: 7
+    precue_min_fill_alpha: 0.2
+    precue_max_fill_alpha: 0.7
+    # Optional emphasis for the next upcoming note among all current pre-cues.
+    precue_primary_outline_color: [255, 255, 255]
+    precue_primary_outline_extra_width: 2
   debug:
     show_head_center: false
     show_wrist_markers: true
