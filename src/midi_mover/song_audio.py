@@ -37,46 +37,6 @@ class SongAudioBackend(Protocol):
 
 
 @dataclass
-class PygameSongAudioBackend:
-    """Target-song backend implemented with pygame.mixer.music."""
-
-    pygame_module: Any
-    playback_gain: float
-    backend_name: str = "pygame"
-
-    def start_song(self, midi_path: Path, *, song_speed_multiplier: float = 1.0) -> None:
-        safe_song_speed = max(1e-6, float(song_speed_multiplier))
-        if abs(safe_song_speed - 1.0) > 1e-6:
-            LOGGER.warning(
-                "Pygame song backend does not support tempo scaling; requested song_speed_multiplier=%.3f will be ignored.",
-                safe_song_speed,
-            )
-        try:
-            self.pygame_module.mixer.music.load(str(midi_path))
-            self.pygame_module.mixer.music.set_volume(self.playback_gain)
-            self.pygame_module.mixer.music.play()
-        except Exception as exc:
-            raise SongAudioBackendError(
-                f"Failed to start target-song playback with pygame backend for '{midi_path}': {exc}"
-            ) from exc
-
-    def stop_song(self) -> None:
-        try:
-            self.pygame_module.mixer.music.stop()
-        except Exception as exc:
-            raise SongAudioBackendError(f"Failed to stop pygame target-song playback: {exc}") from exc
-
-    def shutdown(self) -> None:
-        self.stop_song()
-        try:
-            unload = getattr(self.pygame_module.mixer.music, "unload", None)
-            if callable(unload):
-                unload()
-        except Exception as exc:
-            raise SongAudioBackendError(f"Failed to unload pygame target-song playback: {exc}") from exc
-
-
-@dataclass
 class FluidSynthSongAudioBackend:
     """Target-song backend implemented with pyfluidsynth + SoundFont synthesis."""
 
@@ -278,24 +238,18 @@ class FluidSynthSongAudioBackend:
 
 
 def create_song_audio_backend(*, audio_config: dict[str, Any], pygame_module: Any) -> SongAudioBackend:
-    """Create the configured target-song audio backend from YAML audio.backend."""
+    """Create the configured target-song audio backend from YAML audio.backend.
 
-    backend = str(audio_config.get("backend", "pygame")).strip().lower()
-    if backend == "pygame":
-        return _build_pygame_song_backend(audio_config=audio_config, pygame_module=pygame_module)
+    midi_mover is intentionally FluidSynth-only for song playback.
+    """
+
+    del pygame_module
+    backend = str(audio_config.get("backend", "pyfluidsynth")).strip().lower()
     if backend in {"pyfluidsynth", "fluidsynth"}:
         return FluidSynthSongAudioBackend.initialize_from_config(audio_config=audio_config)
     raise SongAudioBackendError(
-        f"Unsupported target-song audio backend '{backend}'. Configure audio.backend to a supported backend."
+        f"Unsupported target-song audio backend '{backend}'. Configure audio.backend to 'pyfluidsynth'."
     )
-
-
-def _build_pygame_song_backend(*, audio_config: dict[str, Any], pygame_module: Any) -> PygameSongAudioBackend:
-    """Build pygame song backend and enforce immediate-cue routing requirements."""
-
-    levels = resolve_unified_audio_levels(audio_config)
-    playback_gain = float(levels.song)
-    return PygameSongAudioBackend(pygame_module=pygame_module, playback_gain=playback_gain)
 
 
 def _resolve_fluidsynth_cue_channel(audio_config: dict[str, Any]) -> int:

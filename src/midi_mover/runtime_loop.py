@@ -7,7 +7,7 @@ import logging
 import time
 from typing import Any
 
-from midi_mover.audio import GesturePlaybackController, LoadedGestureSounds
+from midi_mover.audio import FluidSynthGesturePlaybackController
 from midi_mover.camera import CameraFrameError, CameraFrameReader
 from midi_mover.circles import compute_circle_geometries
 from midi_mover.interaction_visuals import (
@@ -92,8 +92,7 @@ def render_liveview_frame(
     crop_smoother: CropSmoother,
     circle_visual_tracker: CircleVisualStateTracker,
     config: Any,
-    gesture_sounds: LoadedGestureSounds | None = None,
-    gesture_playback_controller: GesturePlaybackController | None = None,
+    gesture_playback_controller: FluidSynthGesturePlaybackController | None = None,
     normalized_target_notes: tuple[Any, ...] = (),
     song_started_monotonic: float | None = None,
     pre_song_lead_in_ms: float = 0.0,
@@ -224,11 +223,9 @@ def render_liveview_frame(
                     for hit in judged_hits
                 ),
             )
-    if gesture_sounds is not None and gesture_playback_controller is not None:
+    if gesture_playback_controller is not None:
         gesture_playback_controller.update(
-            pygame_module=pygame_module,
             transition_snapshot=transition_snapshot,
-            gesture_sounds=gesture_sounds,
         )
     precue_hints = compute_precue_hints(
         normalized_target_notes=normalized_target_notes,
@@ -414,8 +411,7 @@ def run_persistent_liveview_loop(
     crop_smoother: CropSmoother,
     circle_visual_tracker: CircleVisualStateTracker,
     config: Any,
-    gesture_sounds: LoadedGestureSounds | None = None,
-    gesture_playback_controller: GesturePlaybackController | None = None,
+    gesture_playback_controller: FluidSynthGesturePlaybackController | None = None,
     normalized_target_notes: tuple[Any, ...] = (),
     song_started_monotonic: float | None = None,
     pre_song_lead_in_ms: float = 0.0,
@@ -493,7 +489,6 @@ def run_persistent_liveview_loop(
             crop_smoother=crop_smoother,
             circle_visual_tracker=circle_visual_tracker,
             config=config,
-            gesture_sounds=gesture_sounds,
             gesture_playback_controller=gesture_playback_controller,
             normalized_target_notes=normalized_target_notes,
             song_started_monotonic=song_started_monotonic,

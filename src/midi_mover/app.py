@@ -11,9 +11,6 @@ from midi_mover.config import AppConfig, ConfigError, load_config
 from midi_mover.audio import (
     AudioStartupError,
     FluidSynthGesturePlaybackController,
-    GesturePlaybackController,
-    LoadedGestureSounds,
-    build_gesture_sounds,
     initialize_audio_output,
 )
 from midi_mover.app_smoke import run_startup_smoke_test
@@ -52,8 +49,7 @@ class StartupResources:
     circle_visual_tracker: CircleVisualStateTracker | None = None
     pygame_module: Any | None = None
     mixer_initialized: bool = False
-    gesture_sounds: LoadedGestureSounds | None = None
-    gesture_playback_controller: GesturePlaybackController | None = None
+    gesture_playback_controller: FluidSynthGesturePlaybackController | None = None
     def cleanup(self) -> None:
         if self.camera is not None:
             try:
@@ -66,11 +62,9 @@ class StartupResources:
                 self.camera = None
         if self.pygame_module is not None:
             if self.mixer_initialized:
-                if self.gesture_playback_controller is not None and self.gesture_sounds is not None:
+                if self.gesture_playback_controller is not None:
                     try:
-                        self.gesture_playback_controller.reset(
-                            fade_ms=self.gesture_sounds.playback_config.release_fade_ms,
-                        )
+                        self.gesture_playback_controller.reset()
                     except Exception:  # pragma: no cover - defensive cleanup
                         LOGGER.exception("Failed to reset gesture playback controller during cleanup.")
                     finally:
@@ -165,12 +159,6 @@ def _initialize_pygame_mixer(config: AppConfig, resources: StartupResources) -> 
     except AudioStartupError as exc:
         raise StartupError(str(exc)) from exc
     resources.mixer_initialized = True
-    resources.gesture_sounds = build_gesture_sounds(
-        pygame_module=pygame,
-        audio_config=config.raw["audio"],
-        circles_per_hand=int(config.raw["liveview"]["circles_per_hand"]),
-    )
-    resources.gesture_playback_controller = GesturePlaybackController()
 def _initialize_camera(options: StartupOptions, config: AppConfig) -> Any:
     try:
         import cv2
@@ -365,18 +353,23 @@ def run_interactive_runtime(
     except SongAudioBackendError as exc:
         raise StartupError(str(exc)) from exc
 
-    if getattr(song_audio_backend, "backend_name", "") == "pyfluidsynth":
-        synth = getattr(song_audio_backend, "synth", None)
-        if synth is not None:
-            resources.gesture_playback_controller = FluidSynthGesturePlaybackController.from_audio_config(
-                synth=synth,
-                audio_config=config.raw["audio"],
-                circles_per_hand=int(config.raw["liveview"]["circles_per_hand"]),
-                soundfont_id=getattr(song_audio_backend, "soundfont_id", None),
-            )
-            LOGGER.info(
-                "Configured FluidSynth-based immediate hand-in-circle cues for sustained gesture playback."
-            )
+    if getattr(song_audio_backend, "backend_name", "") != "pyfluidsynth":
+        raise StartupError(
+            "Target-song audio backend must be pyfluidsynth. Set audio.backend to 'pyfluidsynth'."
+        )
+
+    synth = getattr(song_audio_backend, "synth", None)
+    if synth is None:
+        raise StartupError("FluidSynth backend did not expose a synth instance for immediate cues.")
+    resources.gesture_playback_controller = FluidSynthGesturePlaybackController.from_audio_config(
+        synth=synth,
+        audio_config=config.raw["audio"],
+        circles_per_hand=int(config.raw["liveview"]["circles_per_hand"]),
+        soundfont_id=getattr(song_audio_backend, "soundfont_id", None),
+    )
+    LOGGER.info(
+        "Configured FluidSynth-based immediate hand-in-circle cues for sustained gesture playback."
+    )
 
     round_index = 0
     show_title_screen = show_pre_song_title_screen(
@@ -461,7 +454,6 @@ def run_interactive_runtime(
                 crop_smoother=resources.crop_smoother,
                 circle_visual_tracker=resources.circle_visual_tracker,
                 config=config,
-                gesture_sounds=resources.gesture_sounds,
                 gesture_playback_controller=resources.gesture_playback_controller,
                 normalized_target_notes=normalized_target_notes,
                 song_started_monotonic=song_started_monotonic,

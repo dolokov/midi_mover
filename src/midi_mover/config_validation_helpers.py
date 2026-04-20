@@ -38,37 +38,6 @@ def validate_and_normalize_circle_offsets_by_count(
             require_vector2(offset, f"{full_key}.{count_key}.{lane_key}")
 
 
-def validate_gesture_sounds(
-    *,
-    gesture_sounds: dict[str, Any],
-    required_tokens: tuple[str, ...],
-    normalize_mapping_key: Callable[[Any], str],
-    require_type: Callable[[Any, type, str], None],
-    require_numeric: Callable[[Any, str], None],
-    error_type: type[Exception],
-) -> None:
-    normalized = {normalize_mapping_key(key): value for key, value in gesture_sounds.items()}
-    gesture_sounds.clear()
-    gesture_sounds.update(normalized)
-    missing = [token for token in required_tokens if token not in normalized]
-    if missing:
-        token_text = ", ".join(required_tokens)
-        raise error_type(
-            "audio.gesture_sounds must define at least the active gesture tokens "
-            f"{token_text}. Missing: {', '.join(missing)}."
-        )
-
-    for token in required_tokens:
-        spec = normalized[token]
-        require_type(spec, dict, f"audio.gesture_sounds.{token}")
-        if "frequency_hz" not in spec:
-            raise error_type(f"Config key audio.gesture_sounds.{token}.frequency_hz is required.")
-        if "waveform" not in spec:
-            raise error_type(f"Config key audio.gesture_sounds.{token}.waveform is required.")
-        require_numeric(spec["frequency_hz"], f"audio.gesture_sounds.{token}.frequency_hz")
-        require_type(spec["waveform"], str, f"audio.gesture_sounds.{token}.waveform")
-
-
 def validate_fluidsynth_immediate_cue_token_notes(
     *,
     token_notes: dict[str, Any],

@@ -54,7 +54,6 @@ def render_liveview_preview(*, resources: Any, config: Any) -> None:
             crop_smoother=resources.crop_smoother,
             circle_visual_tracker=resources.circle_visual_tracker,
             config=config,
-            gesture_sounds=resources.gesture_sounds,
             gesture_playback_controller=resources.gesture_playback_controller,
         )
     except LiveviewRuntimeError as exc:
@@ -85,8 +84,6 @@ def run_startup_smoke_test(
         raise RuntimeError("Smoke test failed: hand pose model was not initialized.")
     if resources.pygame_module is None or not resources.mixer_initialized:
         raise RuntimeError("Smoke test failed: pygame mixer was not initialized.")
-    if resources.gesture_sounds is None:
-        raise RuntimeError("Smoke test failed: gesture-to-sound mapping was not initialized.")
     if resources.frame_reader is None:
         raise RuntimeError("Smoke test failed: camera frame reader was not initialized.")
     if resources.primary_person_tracker is None:

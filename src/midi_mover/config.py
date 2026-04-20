@@ -7,7 +7,6 @@ from typing import Any
 from midi_mover.config_validation_helpers import (
     validate_and_normalize_circle_offsets_by_count as _validate_circle_offsets_by_count_helper,
     validate_fluidsynth_immediate_cue_token_notes,
-    validate_gesture_sounds,
 )
 from midi_mover.gesture_tokens import build_gesture_tokens, normalize_circles_per_hand
 from midi_mover.simple_yaml import load_simple_yaml
@@ -136,17 +135,10 @@ REQUIRED_PATHS: tuple[tuple[str, ...], ...] = (
     ("audio", "fluidsynth", "polyphony"),
     ("audio", "fluidsynth", "audio_driver"),
     ("audio", "fluidsynth", "audio_buffer_size"),
-    ("audio", "gesture_sounds"),
     ("audio", "volumes", "master"),
     ("audio", "volumes", "song"),
     ("audio", "volumes", "ui"),
     ("audio", "volumes", "hit"),
-    ("audio", "playback", "note_duration_seconds"),
-    ("audio", "playback", "gesture_volume"),
-    ("audio", "playback", "max_concurrent_sounds"),
-    ("audio", "playback", "restart_busy_channel"),
-    ("audio", "playback", "sustain_while_inside"),
-    ("audio", "playback", "release_fade_ms"),
     ("audio", "immediate_cues", "fluidsynth", "enabled"),
     ("audio", "immediate_cues", "fluidsynth", "channel"),
     ("audio", "immediate_cues", "fluidsynth", "velocity"),
@@ -404,20 +396,12 @@ def _validate_value_types(payload: dict[str, Any]) -> None:
         dict,
         "audio.fluidsynth.channel_instruments",
     )
-    _require_type(payload["audio"]["gesture_sounds"], dict, "audio.gesture_sounds")
     _require_type(payload["audio"]["volumes"], dict, "audio.volumes")
     _require_numeric(payload["audio"]["volumes"]["master"], "audio.volumes.master")
     _require_numeric(payload["audio"]["volumes"]["song"], "audio.volumes.song")
     _require_numeric(payload["audio"]["volumes"]["ui"], "audio.volumes.ui")
     _require_numeric(payload["audio"]["volumes"]["hit"], "audio.volumes.hit")
-    _require_type(payload["audio"]["playback"], dict, "audio.playback")
     _require_type(payload["audio"]["mixer"]["max_channels"], int, "audio.mixer.max_channels")
-    _require_numeric(payload["audio"]["playback"]["note_duration_seconds"], "audio.playback.note_duration_seconds")
-    _require_numeric(payload["audio"]["playback"]["gesture_volume"], "audio.playback.gesture_volume")
-    _require_type(payload["audio"]["playback"]["max_concurrent_sounds"], int, "audio.playback.max_concurrent_sounds")
-    _require_type(payload["audio"]["playback"]["restart_busy_channel"], bool, "audio.playback.restart_busy_channel")
-    _require_type(payload["audio"]["playback"]["sustain_while_inside"], bool, "audio.playback.sustain_while_inside")
-    _require_type(payload["audio"]["playback"]["release_fade_ms"], int, "audio.playback.release_fade_ms")
     _require_type(payload["audio"]["immediate_cues"], dict, "audio.immediate_cues")
     _require_type(payload["audio"]["immediate_cues"]["fluidsynth"], dict, "audio.immediate_cues.fluidsynth")
     _require_type(
@@ -447,10 +431,6 @@ def _validate_value_types(payload: dict[str, Any]) -> None:
     )
     _validate_fluidsynth_immediate_cue_token_notes(
         payload["audio"]["immediate_cues"]["fluidsynth"]["token_notes"],
-        circles_per_hand=circles_per_hand,
-    )
-    _validate_gesture_sounds(
-        payload["audio"]["gesture_sounds"],
         circles_per_hand=circles_per_hand,
     )
     _require_type(payload["highscore"]["list_size"], int, "highscore.list_size")
@@ -613,15 +593,6 @@ def _validate_circle_visuals(circle_visuals: dict[str, Any]) -> None:
             int,
             "liveview.circle_visuals.precue_primary_outline_extra_width",
         )
-def _validate_gesture_sounds(gesture_sounds: dict[str, Any], *, circles_per_hand: int) -> None:
-    validate_gesture_sounds(
-        gesture_sounds=gesture_sounds,
-        required_tokens=build_gesture_tokens(circles_per_hand),
-        normalize_mapping_key=_normalize_mapping_key,
-        require_type=_require_type,
-        require_numeric=_require_numeric,
-        error_type=ConfigError,
-    )
 def _validate_fluidsynth_immediate_cue_token_notes(
     token_notes: dict[str, Any],
     *,

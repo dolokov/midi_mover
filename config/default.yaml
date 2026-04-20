@@ -262,37 +262,6 @@ audio:
     channels: 2
     buffer: 512
     max_channels: 16
-  gesture_sounds:
-    L1:
-      frequency_hz: 261.63
-      waveform: sine
-    L2:
-      frequency_hz: 293.66
-      waveform: sine
-    L3:
-      frequency_hz: 329.63
-      waveform: sine
-    L4:
-      frequency_hz: 349.23
-      waveform: sine
-    L5:
-      frequency_hz: 392.0
-      waveform: sine
-    R1:
-      frequency_hz: 523.25
-      waveform: sine
-    R2:
-      frequency_hz: 587.33
-      waveform: sine
-    R3:
-      frequency_hz: 659.25
-      waveform: sine
-    R4:
-      frequency_hz: 698.46
-      waveform: sine
-    R5:
-      frequency_hz: 783.99
-      waveform: sine
   volumes:
     master: 1.0
     song: 0.0 #1.0
@@ -315,13 +284,6 @@ audio:
         R3: 64
         R4: 67
         R5: 69
-  playback:
-    note_duration_seconds: 0.18
-    gesture_volume: 0.8
-    max_concurrent_sounds: 6
-    restart_busy_channel: true
-    sustain_while_inside: true
-    release_fade_ms: 120
 
 highscore:
   list_size: 3

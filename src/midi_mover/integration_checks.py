@@ -4,13 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from midi_mover.audio import (
-    AudioPlaybackConfig,
-    GesturePlaybackController,
-    GestureSoundMapping,
-    GestureSoundSpec,
-    LoadedGestureSounds,
-)
+from midi_mover.audio import FluidSynthGesturePlaybackController
 from midi_mover.circles import CircleGeometry
 from midi_mover.hand_keypoints import FingertipSample
 from midi_mover.interaction_visuals import (
@@ -25,53 +19,23 @@ from midi_mover.runtime_loop import run_persistent_liveview_loop
 
 
 @dataclass
-class _FakeSound:
-    token: str
-    volume: float = 0.0
+class _FakeFluidSynth:
+    noteon_calls: list[tuple[int, int, int]]
+    noteoff_calls: list[tuple[int, int]]
+    program_change_calls: list[tuple[int, int]]
 
-    def set_volume(self, value: float) -> None:
-        self.volume = float(value)
+    def noteon(self, channel: int, note: int, velocity: int) -> None:
+        self.noteon_calls.append((int(channel), int(note), int(velocity)))
 
+    def noteoff(self, channel: int, note: int) -> None:
+        self.noteoff_calls.append((int(channel), int(note)))
 
-@dataclass
-class _FakeChannel:
-    played_tokens: list[str]
-    busy: bool = False
-
-    def get_busy(self) -> bool:
-        return self.busy
-
-    def play(self, sound: _FakeSound, loops: int = 0) -> None:
-        self.busy = True
-        self.played_tokens.append(sound.token)
-
-    def fadeout(self, _: int) -> None:
-        self.busy = False
-
-    def stop(self) -> None:
-        self.busy = False
-
-
-@dataclass
-class _FakeMixer:
-    channels: list[_FakeChannel]
-
-    def find_channel(self, force: bool = False) -> _FakeChannel | None:
-        for channel in self.channels:
-            if not channel.get_busy():
-                return channel
-        if force and self.channels:
-            return self.channels[0]
-        return None
-
-
-@dataclass
-class _FakePygame:
-    mixer: _FakeMixer
+    def program_change(self, channel: int, program: int) -> None:
+        self.program_change_calls.append((int(channel), int(program)))
 
 
 def verify_fingertip_audio_integration() -> None:
-    """Verify fingertip events still drive transition + audio hooks correctly."""
+    """Verify fingertip events still drive FluidSynth immediate cue hooks correctly."""
 
     circles = (
         CircleGeometry(lane=1, hand="L", center_xy=(100.0, 100.0), radius=20, offset_xy=(0.0, 0.0)),
@@ -127,45 +91,46 @@ def verify_fingertip_audio_integration() -> None:
         ),
     )
 
-    playback_config = AudioPlaybackConfig(
-        note_duration_seconds=0.1,
-        gesture_volume=0.8,
-        max_concurrent_sounds=2,
-        restart_busy_channel=True,
-        sustain_while_inside=True,
-        release_fade_ms=0,
+    fake_synth = _FakeFluidSynth(noteon_calls=[], noteoff_calls=[], program_change_calls=[])
+    playback_controller = FluidSynthGesturePlaybackController.from_audio_config(
+        synth=fake_synth,
+        circles_per_hand=3,
+        audio_config={
+            "immediate_cues": {
+                "fluidsynth": {
+                    "enabled": True,
+                    "channel": 15,
+                    "velocity": 96,
+                    "sustain_while_inside": True,
+                    "token_notes": {"L1": 48, "L2": 50, "L3": 52, "R1": 60, "R2": 62, "R3": 64},
+                }
+            },
+            "volumes": {"master": 1.0, "song": 1.0, "hit": 1.0, "ui": 1.0},
+            "fluidsynth": {},
+        },
     )
-    mapping = GestureSoundMapping(
-        specs={"L1": GestureSoundSpec(token="L1", frequency_hz=261.63, waveform="sine")}
-    )
-    sounds = {"L1": _FakeSound(token="L1")}
-    gesture_sounds = LoadedGestureSounds(
-        mapping=mapping,
-        sounds=sounds,
-        playback_config=playback_config,
-    )
-    pygame_module = _FakePygame(mixer=_FakeMixer(channels=[_FakeChannel(played_tokens=[])]))
 
     transition_tracker = HandCircleTransitionTracker(debounce_ms=0)
-    playback_controller = GesturePlaybackController()
 
     inside_snapshot = detect_hand_circle_interactions(circle_geometries=circles, gameplay_keypoints=inside)
     enter_transitions = transition_tracker.update(inside_snapshot)
     started_tokens = playback_controller.update(
-        pygame_module=pygame_module,
         transition_snapshot=enter_transitions,
-        gesture_sounds=gesture_sounds,
     )
-    if "L1" not in started_tokens:
-        raise RuntimeError("Fingertip integration check failed: expected L1 playback on fingertip enter.")
+    if "L1" not in started_tokens or not fake_synth.noteon_calls:
+        raise RuntimeError(
+            "Fingertip integration check failed: expected L1 FluidSynth noteon on fingertip enter."
+        )
 
     outside_snapshot = detect_hand_circle_interactions(circle_geometries=circles, gameplay_keypoints=outside)
     exit_transitions = transition_tracker.update(outside_snapshot)
     playback_controller.update(
-        pygame_module=pygame_module,
         transition_snapshot=exit_transitions,
-        gesture_sounds=gesture_sounds,
     )
+    if not fake_synth.noteoff_calls:
+        raise RuntimeError(
+            "Fingertip integration check failed: expected FluidSynth noteoff when fingertip exits circle."
+        )
     playback_controller.reset()
 
 
