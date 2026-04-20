@@ -11,10 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from midi_mover.gesture_tokens import build_lane_keys, normalize_circles_per_hand
 from midi_mover.pose import GameplayKeypoints
-
-
-EXPECTED_CIRCLE_ORDER: tuple[str, ...] = ("1", "2", "3", "4", "5")
 
 
 @dataclass(frozen=True)
@@ -43,8 +41,9 @@ def compute_circle_geometries(
     gameplay_keypoints: GameplayKeypoints | None,
     frame_width: int,
     frame_height: int,
-    left_circle_offsets_percent: dict[str, list[float] | tuple[float, float]],
-    right_circle_offsets_percent: dict[str, list[float] | tuple[float, float]],
+    circles_per_hand: int,
+    left_circle_offsets_percent_by_count: dict[str, Any],
+    right_circle_offsets_percent_by_count: dict[str, Any],
     circle_radius_percent: float,
     scale_width_multiplier: float = 12.0,
 ) -> tuple[CircleGeometry, ...]:
@@ -74,13 +73,32 @@ def compute_circle_geometries(
     )
     pixels_per_percent = base_dimension / 100.0
     radius = max(1, int(round(float(circle_radius_percent) * pixels_per_percent)))
+    normalized_count = normalize_circles_per_hand(circles_per_hand)
+    count_key = str(normalized_count)
 
-    left_normalized = _normalize_circle_offsets(left_circle_offsets_percent)
-    right_normalized = _normalize_circle_offsets(right_circle_offsets_percent)
+    if count_key not in left_circle_offsets_percent_by_count:
+        raise ValueError(
+            f"Missing left-hand circle offsets for circles_per_hand={normalized_count}."
+        )
+    if count_key not in right_circle_offsets_percent_by_count:
+        raise ValueError(
+            f"Missing right-hand circle offsets for circles_per_hand={normalized_count}."
+        )
+
+    lane_keys = build_lane_keys(normalized_count)
+
+    left_normalized = _normalize_circle_offsets(
+        left_circle_offsets_percent_by_count[count_key],
+        expected_lane_keys=lane_keys,
+    )
+    right_normalized = _normalize_circle_offsets(
+        right_circle_offsets_percent_by_count[count_key],
+        expected_lane_keys=lane_keys,
+    )
 
     geometries: list[CircleGeometry] = []
     for hand, normalized_offsets in (("L", left_normalized), ("R", right_normalized)):
-        for lane_key in EXPECTED_CIRCLE_ORDER:
+        for lane_key in lane_keys:
             offset_x_percent, offset_y_percent = normalized_offsets[lane_key]
             offset_x = offset_x_percent * pixels_per_percent
             offset_y = offset_y_percent * pixels_per_percent
@@ -117,14 +135,16 @@ def _resolve_circle_scale_basis(
 
 def _normalize_circle_offsets(
     circle_offsets_percent: dict[str, list[float] | tuple[float, float]],
+    *,
+    expected_lane_keys: tuple[str, ...],
 ) -> dict[str, tuple[float, float]]:
-    missing = [lane for lane in EXPECTED_CIRCLE_ORDER if lane not in circle_offsets_percent]
+    missing = [lane for lane in expected_lane_keys if lane not in circle_offsets_percent]
     if missing:
         joined = ", ".join(missing)
         raise ValueError(f"Missing circle offsets for lane(s): {joined}")
 
     normalized: dict[str, tuple[float, float]] = {}
-    for lane_key in EXPECTED_CIRCLE_ORDER:
+    for lane_key in expected_lane_keys:
         raw_offset: Any = circle_offsets_percent[lane_key]
         if not isinstance(raw_offset, (list, tuple)) or len(raw_offset) != 2:
             raise ValueError(f"Circle offset for lane {lane_key} must be a 2-item list or tuple.")

@@ -7,17 +7,19 @@ from random import Random
 from typing import Any
 import math
 
-
-GESTURE_TOKENS: tuple[str, ...] = ("L1", "L2", "L3", "L4", "L5", "R1", "R2", "R3", "R4", "R5")
-
+from midi_mover.gesture_tokens import build_gesture_tokens
 
 def build_mapping_state_debug_section(
     *,
     playable_notes: tuple[Any, ...],
     mapped_notes: tuple[Any, ...],
     midi_config: dict[str, Any],
+    circles_per_hand: int,
     max_rows: int,
 ) -> list[str]:
+    if not playable_notes:
+        return ["", "Adaptive mapping introspection: no playable notes."]
+
     adaptive = midi_config.get("adaptive_mapping") or {}
     enabled = bool(adaptive.get("enabled", False))
     trigger_note_count = int(adaptive.get("trigger_note_count", 10))
@@ -35,7 +37,8 @@ def build_mapping_state_debug_section(
         ]
 
     recent_note_numbers: deque[int] = deque(maxlen=rolling_size)
-    token_count = len(GESTURE_TOKENS)
+    gesture_tokens = build_gesture_tokens(circles_per_hand)
+    token_count = len(gesture_tokens)
     rng = Random(int(creative_seed)) if creative_seed is not None else None
 
     lines = [
@@ -65,7 +68,7 @@ def build_mapping_state_debug_section(
                 seeded_offset = rng.choice((-1, 0, 1)) if rng is not None else 0
                 token_index = max(0, min(token_count - 1, token_index + wave_offset + seeded_offset))
 
-            assignment_chunks.append(f"{ranked_note}->{GESTURE_TOKENS[token_index]}")
+            assignment_chunks.append(f"{ranked_note}->{gesture_tokens[token_index]}")
 
         lines.append(
             " | ".join(

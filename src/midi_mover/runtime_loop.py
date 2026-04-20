@@ -109,6 +109,7 @@ def render_liveview_frame(
         pygame_module=pygame_module,
         window_width=window.get_width(),
         window_height=window.get_height(),
+        lane_count=int(config.raw["liveview"]["circles_per_hand"]),
         now_line_ratio=float(config.raw["gameplay"]["timeline_now_line_ratio"]),
     )
 
@@ -148,8 +149,9 @@ def render_liveview_frame(
         gameplay_keypoints=gameplay_keypoints,
         frame_width=frame.width,
         frame_height=frame.height,
-        left_circle_offsets_percent=config.raw["liveview"]["left_circle_offsets_percent"],
-        right_circle_offsets_percent=config.raw["liveview"]["right_circle_offsets_percent"],
+        circles_per_hand=int(config.raw["liveview"]["circles_per_hand"]),
+        left_circle_offsets_percent_by_count=config.raw["liveview"]["left_circle_offsets_percent_by_count"],
+        right_circle_offsets_percent_by_count=config.raw["liveview"]["right_circle_offsets_percent_by_count"],
         circle_radius_percent=float(config.raw["liveview"]["circle_radius_percent"]),
         scale_width_multiplier=float(config.raw["liveview"]["crop_width_eye_dist"]),
     )

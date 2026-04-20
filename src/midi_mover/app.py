@@ -16,13 +16,8 @@ from midi_mover.audio import (
     build_gesture_sounds,
     initialize_audio_output,
 )
-from midi_mover.audio_integration_checks import verify_fluidsynth_profile_effect_settings
-from midi_mover.highscore_integration_checks import (
-    verify_headshot_crop_margin_behavior,
-    verify_highscore_headshot_persistence_behavior,
-)
+from midi_mover.app_smoke import run_startup_smoke_test
 from midi_mover.interaction_visuals import CircleVisualStateTracker, HandCircleTransitionTracker
-from midi_mover.integration_checks import (verify_fingertip_audio_integration, verify_gameplay_score_tracking_behavior, verify_hit_window_judgment_behavior, verify_judgment_to_liveview_flash_behavior)
 from midi_mover.liveview import CropSmoother
 from midi_mover.app_logging import log_config_summary, log_startup
 from midi_mover.logging_utils import configure_logging
@@ -38,7 +33,7 @@ from midi_mover.highscore_handoff import run_post_song_highscore_handoff
 from midi_mover.song_intro import build_song_title, show_pre_song_title_screen
 from midi_mover.song_summary import SongCompleteSummary, show_song_complete_summary_screen
 from midi_mover.song_targets import load_normalized_target_notes_from_midi
-from midi_mover.runtime_loop import LiveviewRuntimeError, render_liveview_frame, run_persistent_liveview_loop
+from midi_mover.runtime_loop import LiveviewRuntimeError, run_persistent_liveview_loop
 from midi_mover.song_audio import SongAudioBackendError, create_song_audio_backend
 LOGGER = logging.getLogger("midi_mover")
 class StartupError(RuntimeError):
@@ -173,6 +168,7 @@ def _initialize_pygame_mixer(config: AppConfig, resources: StartupResources) -> 
     resources.gesture_sounds = build_gesture_sounds(
         pygame_module=pygame,
         audio_config=config.raw["audio"],
+        circles_per_hand=int(config.raw["liveview"]["circles_per_hand"]),
     )
     resources.gesture_playback_controller = GesturePlaybackController()
 def _initialize_camera(options: StartupOptions, config: AppConfig) -> Any:
@@ -322,106 +318,23 @@ def choose_random_midi_file(midi_files: list[Path], config: AppConfig) -> Path:
             selected.name,
         )
     return selected
-def _render_liveview_preview(resources: StartupResources, config: AppConfig) -> None:
-    if resources.window is None:
-        raise StartupError("Liveview preview failed: pygame window was not initialized.")
-    if resources.pygame_module is None:
-        raise StartupError("Liveview preview failed: pygame module was not initialized.")
-    if resources.frame_reader is None:
-        raise StartupError("Liveview preview failed: camera frame reader was not initialized.")
-    if resources.pose_model is None:
-        raise StartupError("Liveview preview failed: pose model was not initialized.")
-    if resources.hand_pose_model is None:
-        raise StartupError("Liveview preview failed: hand pose model was not initialized.")
-    if resources.primary_person_tracker is None:
-        raise StartupError("Liveview preview failed: primary person tracker was not initialized.")
-    if resources.gameplay_keypoint_tracker is None:
-        raise StartupError("Liveview preview failed: gameplay keypoint tracker was not initialized.")
-    if resources.crop_smoother is None:
-        raise StartupError("Liveview preview failed: crop smoother was not initialized.")
-    if resources.interaction_transition_tracker is None:
-        raise StartupError("Liveview preview failed: interaction transition tracker was not initialized.")
-    if resources.circle_visual_tracker is None:
-        raise StartupError("Liveview preview failed: circle visual tracker was not initialized.")
-    try:
-        render_liveview_frame(
-            window=resources.window,
-            pygame_module=resources.pygame_module,
-            frame_reader=resources.frame_reader,
-            pose_model=resources.pose_model,
-            hand_pose_model=resources.hand_pose_model,
-            primary_person_tracker=resources.primary_person_tracker,
-            gameplay_keypoint_tracker=resources.gameplay_keypoint_tracker,
-            interaction_transition_tracker=resources.interaction_transition_tracker,
-            crop_smoother=resources.crop_smoother,
-            circle_visual_tracker=resources.circle_visual_tracker,
-            config=config,
-            gesture_sounds=resources.gesture_sounds,
-            gesture_playback_controller=resources.gesture_playback_controller,
-        )
-    except LiveviewRuntimeError as exc:
-        raise StartupError(str(exc)) from exc
 def run_smoke_test(
     options: StartupOptions,
     config: AppConfig,
     resources: StartupResources,
 ) -> None:
-    LOGGER.info("Running startup smoke test.")
-    midi_files = discover_midi_files(options.midi_dir, config)
-    selected_midi = choose_random_midi_file(midi_files, config)
-    selected_song_title = build_song_title(selected_midi)
-    if resources.window is None:
-        raise StartupError("Smoke test failed: pygame window was not initialized.")
-    if resources.camera is None:
-        raise StartupError("Smoke test failed: camera was not initialized.")
-    if resources.pose_model is None:
-        raise StartupError("Smoke test failed: pose model was not initialized.")
-    if resources.hand_pose_model is None:
-        raise StartupError("Smoke test failed: hand pose model was not initialized.")
-    if resources.pygame_module is None or not resources.mixer_initialized:
-        raise StartupError("Smoke test failed: pygame mixer was not initialized.")
-    if resources.gesture_sounds is None:
-        raise StartupError("Smoke test failed: gesture-to-sound mapping was not initialized.")
-    if resources.frame_reader is None:
-        raise StartupError("Smoke test failed: camera frame reader was not initialized.")
-    if resources.primary_person_tracker is None:
-        raise StartupError("Smoke test failed: primary person tracker was not initialized.")
-    if resources.gameplay_keypoint_tracker is None:
-        raise StartupError("Smoke test failed: gameplay keypoint tracker was not initialized.")
-    if resources.crop_smoother is None:
-        raise StartupError("Smoke test failed: crop smoother was not initialized.")
-    if resources.interaction_transition_tracker is None:
-        raise StartupError("Smoke test failed: interaction transition tracker was not initialized.")
-    if resources.circle_visual_tracker is None:
-        raise StartupError("Smoke test failed: circle visual tracker was not initialized.")
-    pygame = resources.pygame_module
-    pygame.event.pump()
-    _render_liveview_preview(resources, config)
-    verify_fingertip_audio_integration()
-    LOGGER.info("Verified fingertip-driven interaction transitions and downstream audio hook integration.")
-    verify_hit_window_judgment_behavior()
-    LOGGER.info("Verified hit-window hand/lane judgment integration behavior.")
-    verify_judgment_to_liveview_flash_behavior()
-    LOGGER.info("Verified judgment-to-liveview circle flash integration behavior.")
-    verify_gameplay_score_tracking_behavior()
-    LOGGER.info("Verified gameplay score tracking behavior for score/combo/hit/miss metrics.")
-    verify_fluidsynth_profile_effect_settings()
-    LOGGER.info("Verified FluidSynth profile-based reverb/chorus settings across two instrument profiles.")
-    verify_headshot_crop_margin_behavior()
-    LOGGER.info("Verified highscore headshot crop margin behavior for countdown-complete capture framing.")
-    verify_highscore_headshot_persistence_behavior()
-    LOGGER.info("Verified highscore headshot persistence writes image path into stored leaderboard row.")
-    LOGGER.info(
-        "Smoke test touched subsystems successfully: window=%s mixer=%s frame_reader=%s pose_model=%s midi_files=%s.",
-        resources.window.get_size(),
-        resources.mixer_initialized,
-        type(resources.frame_reader).__name__,
-        type(resources.pose_model).__name__,
-        len(midi_files),
-    )
-    LOGGER.info("Smoke test random MIDI selection result: %s", selected_midi.name)
-    LOGGER.info("Smoke test extracted song title: %s", selected_song_title)
-    LOGGER.info("Smoke test completed successfully and exited cleanly.")
+    try:
+        run_startup_smoke_test(
+            resources=resources,
+            config=config,
+            midi_dir=options.midi_dir,
+            discover_midi_files=discover_midi_files,
+            choose_random_midi_file=choose_random_midi_file,
+            build_song_title=build_song_title,
+            logger=LOGGER,
+        )
+    except RuntimeError as exc:
+        raise StartupError(str(exc)) from exc
 def run_interactive_runtime(
     options: StartupOptions,
     config: AppConfig,
@@ -458,6 +371,7 @@ def run_interactive_runtime(
             resources.gesture_playback_controller = FluidSynthGesturePlaybackController.from_audio_config(
                 synth=synth,
                 audio_config=config.raw["audio"],
+                circles_per_hand=int(config.raw["liveview"]["circles_per_hand"]),
                 soundfont_id=getattr(song_audio_backend, "soundfont_id", None),
             )
             LOGGER.info(
@@ -495,6 +409,7 @@ def run_interactive_runtime(
                         build_midi_debug_report(
                             midi_path=selected_midi,
                             midi_config=config.raw["midi"],
+                            circles_per_hand=int(config.raw["liveview"]["circles_per_hand"]),
                             max_notes=options.midi_inspect_max_notes,
                         ),
                     )
@@ -504,6 +419,7 @@ def run_interactive_runtime(
                 normalized_target_notes = load_normalized_target_notes_from_midi(
                     midi_path=selected_midi,
                     midi_config=config.raw["midi"],
+                    circles_per_hand=int(config.raw["liveview"]["circles_per_hand"]),
                 )
             except MidiParseError as exc:
                 raise StartupError(

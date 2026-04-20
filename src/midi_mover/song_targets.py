@@ -18,6 +18,7 @@ def load_normalized_target_notes_from_midi(
     *,
     midi_path: Path,
     midi_config: dict[str, Any],
+    circles_per_hand: int = 5,
 ) -> tuple[NormalizedTargetNote, ...]:
     """Parse a MIDI file and return normalized target notes for timeline rendering."""
 
@@ -29,5 +30,9 @@ def load_normalized_target_notes_from_midi(
     mapped_notes = map_playable_midi_notes_to_gesture_tokens(
         playable_notes=playable_notes,
         midi_config=midi_config,
+        circles_per_hand=circles_per_hand,
     )
-    return build_normalized_target_notes(mapped_notes=mapped_notes)
+    return build_normalized_target_notes(
+        mapped_notes=mapped_notes,
+        circles_per_hand=circles_per_hand,
+    )

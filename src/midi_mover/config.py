@@ -4,6 +4,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from midi_mover.config_validation_helpers import (
+    validate_and_normalize_circle_offsets_by_count as _validate_circle_offsets_by_count_helper,
+    validate_fluidsynth_immediate_cue_token_notes,
+    validate_gesture_sounds,
+)
+from midi_mover.gesture_tokens import build_gesture_tokens, normalize_circles_per_hand
 from midi_mover.simple_yaml import load_simple_yaml
 try:
     import yaml  # type: ignore
@@ -91,9 +97,10 @@ REQUIRED_PATHS: tuple[tuple[str, ...], ...] = (
     ("liveview", "debug", "stage2_hand_keypoints_style", "fingertip_radius"),
     ("liveview", "debug", "stage2_hand_keypoints_style", "fingertip_outline_color"),
     ("liveview", "debug", "stage2_hand_keypoints_style", "fingertip_outline_width"),
+    ("liveview", "circles_per_hand"),
     ("liveview", "circle_radius_percent"),
-    ("liveview", "left_circle_offsets_percent"),
-    ("liveview", "right_circle_offsets_percent"),
+    ("liveview", "left_circle_offsets_percent_by_count"),
+    ("liveview", "right_circle_offsets_percent_by_count"),
     ("liveview", "circle_stroke_width"),
     ("liveview", "label_font_size"),
     ("liveview", "wrist_marker_radius"),
@@ -297,15 +304,21 @@ def _validate_value_types(payload: dict[str, Any]) -> None:
         payload["liveview"]["circle_radius_percent"],
         "liveview.circle_radius_percent",
     )
+    _require_type(payload["liveview"]["circles_per_hand"], int, "liveview.circles_per_hand")
+    try:
+        circles_per_hand = normalize_circles_per_hand(payload["liveview"]["circles_per_hand"])
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc
+    payload["liveview"]["circles_per_hand"] = circles_per_hand
     _require_type(
-        payload["liveview"]["left_circle_offsets_percent"],
+        payload["liveview"]["left_circle_offsets_percent_by_count"],
         dict,
-        "liveview.left_circle_offsets_percent",
+        "liveview.left_circle_offsets_percent_by_count",
     )
     _require_type(
-        payload["liveview"]["right_circle_offsets_percent"],
+        payload["liveview"]["right_circle_offsets_percent_by_count"],
         dict,
-        "liveview.right_circle_offsets_percent",
+        "liveview.right_circle_offsets_percent_by_count",
     )
     _require_type(payload["liveview"]["circle_stroke_width"], int, "liveview.circle_stroke_width")
     _require_type(payload["liveview"]["label_font_size"], int, "liveview.label_font_size")
@@ -433,37 +446,36 @@ def _validate_value_types(payload: dict[str, Any]) -> None:
         "audio.immediate_cues.fluidsynth.token_notes",
     )
     _validate_fluidsynth_immediate_cue_token_notes(
-        payload["audio"]["immediate_cues"]["fluidsynth"]["token_notes"]
+        payload["audio"]["immediate_cues"]["fluidsynth"]["token_notes"],
+        circles_per_hand=circles_per_hand,
     )
-    _validate_gesture_sounds(payload["audio"]["gesture_sounds"])
+    _validate_gesture_sounds(
+        payload["audio"]["gesture_sounds"],
+        circles_per_hand=circles_per_hand,
+    )
     _require_type(payload["highscore"]["list_size"], int, "highscore.list_size")
     _require_numeric(payload["highscore"]["headshot_countdown_seconds"], "highscore.headshot_countdown_seconds")
     _require_numeric(payload["highscore"]["leaderboard_screen_duration_seconds"], "highscore.leaderboard_screen_duration_seconds")
     _require_numeric(payload["highscore"]["headshot_crop_margin"], "highscore.headshot_crop_margin")
     _require_type(payload["highscore"]["thumbnail_width"], int, "highscore.thumbnail_width")
     _require_type(payload["highscore"]["thumbnail_height"], int, "highscore.thumbnail_height")
-    _validate_and_normalize_circle_offsets(
+    _validate_and_normalize_circle_offsets_by_count(
         payload["liveview"],
-        "left_circle_offsets_percent",
+        "left_circle_offsets_percent_by_count",
     )
-    _validate_and_normalize_circle_offsets(
+    _validate_and_normalize_circle_offsets_by_count(
         payload["liveview"],
-        "right_circle_offsets_percent",
+        "right_circle_offsets_percent_by_count",
     )
-def _validate_and_normalize_circle_offsets(liveview_payload: dict[str, Any], key: str) -> None:
-    """Normalize and validate a circle-offsets dict in-place (keys '1'..'5', values [x,y])."""
-    raw_offsets: dict[str, Any] = liveview_payload[key]
-    normalized = {
-        _normalize_mapping_key(k): value for k, value in raw_offsets.items()
-    }
-    liveview_payload[key] = normalized
-    full_key = f"liveview.{key}"
-    if sorted(normalized.keys()) != ["1", "2", "3", "4", "5"]:
-        raise ConfigError(
-            f"{full_key} must define exactly the string keys '1' through '5'."
-        )
-    for lane_key, offset in normalized.items():
-        _require_vector2(offset, f"{full_key}.{lane_key}")
+def _validate_and_normalize_circle_offsets_by_count(liveview_payload: dict[str, Any], key: str) -> None:
+    """Normalize and validate circle offsets grouped by circle count ('3', '4', '5')."""
+    _validate_circle_offsets_by_count_helper(
+        liveview_payload=liveview_payload,
+        key=key,
+        normalize_mapping_key=_normalize_mapping_key,
+        require_vector2=_require_vector2,
+        error_type=ConfigError,
+    )
 def _require_type(value: Any, expected_type: type, name: str) -> None:
     if not isinstance(value, expected_type):
         raise ConfigError(
@@ -557,48 +569,27 @@ def _validate_circle_visuals(circle_visuals: dict[str, Any]) -> None:
         int,
         "liveview.circle_visuals.miss_flash_duration_ms",
     )
-def _validate_gesture_sounds(gesture_sounds: dict[str, Any]) -> None:
-    required_tokens = ("L1", "L2", "L3", "L4", "L5", "R1", "R2", "R3", "R4", "R5")
-    normalized = {_normalize_mapping_key(key): value for key, value in gesture_sounds.items()}
-    gesture_sounds.clear()
-    gesture_sounds.update(normalized)
-    if sorted(normalized.keys()) != sorted(required_tokens):
-        raise ConfigError(
-            "audio.gesture_sounds must define exactly the gesture tokens "
-            "L1, L2, L3, L4, L5, R1, R2, R3, R4, and R5."
-        )
-    for token in required_tokens:
-        spec = normalized[token]
-        _require_type(spec, dict, f"audio.gesture_sounds.{token}")
-        if "frequency_hz" not in spec:
-            raise ConfigError(
-                f"Config key audio.gesture_sounds.{token}.frequency_hz is required."
-            )
-        if "waveform" not in spec:
-            raise ConfigError(f"Config key audio.gesture_sounds.{token}.waveform is required.")
-        _require_numeric(spec["frequency_hz"], f"audio.gesture_sounds.{token}.frequency_hz")
-        _require_type(spec["waveform"], str, f"audio.gesture_sounds.{token}.waveform")
-
-
-def _validate_fluidsynth_immediate_cue_token_notes(token_notes: dict[str, Any]) -> None:
-    required_tokens = ("L1", "L2", "L3", "L4", "L5", "R1", "R2", "R3", "R4", "R5")
-    normalized = {_normalize_mapping_key(key): value for key, value in token_notes.items()}
-    token_notes.clear()
-    token_notes.update(normalized)
-    if sorted(normalized.keys()) != sorted(required_tokens):
-        raise ConfigError(
-            "audio.immediate_cues.fluidsynth.token_notes must define exactly the gesture tokens "
-            "L1, L2, L3, L4, L5, R1, R2, R3, R4, and R5."
-        )
-    for token in required_tokens:
-        note_number = normalized[token]
-        _require_type(note_number, int, f"audio.immediate_cues.fluidsynth.token_notes.{token}")
-        if not 0 <= int(note_number) <= 127:
-            raise ConfigError(
-                f"Config key audio.immediate_cues.fluidsynth.token_notes.{token} must be between 0 and 127."
-            )
-
-
+def _validate_gesture_sounds(gesture_sounds: dict[str, Any], *, circles_per_hand: int) -> None:
+    validate_gesture_sounds(
+        gesture_sounds=gesture_sounds,
+        required_tokens=build_gesture_tokens(circles_per_hand),
+        normalize_mapping_key=_normalize_mapping_key,
+        require_type=_require_type,
+        require_numeric=_require_numeric,
+        error_type=ConfigError,
+    )
+def _validate_fluidsynth_immediate_cue_token_notes(
+    token_notes: dict[str, Any],
+    *,
+    circles_per_hand: int,
+) -> None:
+    validate_fluidsynth_immediate_cue_token_notes(
+        token_notes=token_notes,
+        required_tokens=build_gesture_tokens(circles_per_hand),
+        normalize_mapping_key=_normalize_mapping_key,
+        require_type=_require_type,
+        error_type=ConfigError,
+    )
 def _normalize_mapping_key(key: Any) -> str:
     text = str(key)
     if (text.startswith('"') and text.endswith('"')) or (

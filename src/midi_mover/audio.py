@@ -9,13 +9,12 @@ from array import array
 from typing import Any
 
 from midi_mover.audio_levels import resolve_unified_audio_levels
+from midi_mover.gesture_tokens import build_gesture_tokens, normalize_circles_per_hand
 from midi_mover.interaction_visuals import InteractionTransitionSnapshot
 from midi_mover.song_audio import resolve_shared_fluidsynth_cue_instrument
 
 
 LOGGER = logging.getLogger("midi_mover")
-
-GESTURE_TOKENS: tuple[str, ...] = ("L1", "L2", "L3", "L4", "L5", "R1", "R2", "R3", "R4", "R5")
 
 
 @dataclass(frozen=True)
@@ -33,8 +32,8 @@ class GestureSoundMapping:
 
     specs: dict[str, GestureSoundSpec]
 
-    def validate_complete(self) -> None:
-        missing = [token for token in GESTURE_TOKENS if token not in self.specs]
+    def validate_complete(self, *, required_tokens: tuple[str, ...]) -> None:
+        missing = [token for token in required_tokens if token not in self.specs]
         if missing:
             joined = ", ".join(missing)
             raise AudioStartupError(f"Gesture sound mapping is incomplete. Missing tokens: {joined}.")
@@ -201,9 +200,13 @@ class FluidSynthGesturePlaybackController:
         *,
         synth: Any,
         audio_config: dict[str, Any],
+        circles_per_hand: int = 5,
         soundfont_id: int | None = None,
     ) -> "FluidSynthGesturePlaybackController":
-        cue_config = _load_fluidsynth_immediate_cue_config(audio_config)
+        cue_config = _load_fluidsynth_immediate_cue_config(
+            audio_config,
+            circles_per_hand=circles_per_hand,
+        )
         return cls(synth=synth, cue_config=cue_config, soundfont_id=soundfont_id)
 
     def reset(self, *, fade_ms: int = 0) -> None:  # noqa: ARG002 - parity with pygame controller API
@@ -348,15 +351,20 @@ def initialize_audio_output(*, pygame_module: Any, audio_config: dict[str, Any])
     return status
 
 
-def load_gesture_sound_mapping(audio_config: dict[str, Any]) -> GestureSoundMapping:
+def load_gesture_sound_mapping(
+    audio_config: dict[str, Any],
+    *,
+    circles_per_hand: int,
+) -> GestureSoundMapping:
     """Load and validate the explicit audio mapping for all gameplay gesture tokens."""
 
     raw_mapping = audio_config.get("gesture_sounds")
     if not isinstance(raw_mapping, dict):
         raise AudioStartupError("Audio config must define audio.gesture_sounds as a mapping.")
 
+    required_tokens = build_gesture_tokens(circles_per_hand)
     specs: dict[str, GestureSoundSpec] = {}
-    for token in GESTURE_TOKENS:
+    for token in required_tokens:
         raw_spec = raw_mapping.get(token)
         if not isinstance(raw_spec, dict):
             raise AudioStartupError(f"Audio gesture token '{token}' must map to an object spec.")
@@ -378,7 +386,7 @@ def load_gesture_sound_mapping(audio_config: dict[str, Any]) -> GestureSoundMapp
         specs[token] = GestureSoundSpec(token=token, frequency_hz=frequency_hz, waveform=waveform)
 
     mapping = GestureSoundMapping(specs=specs)
-    mapping.validate_complete()
+    mapping.validate_complete(required_tokens=required_tokens)
     return mapping
 
 
@@ -386,11 +394,15 @@ def build_gesture_sounds(
     *,
     pygame_module: Any,
     audio_config: dict[str, Any],
+    circles_per_hand: int = 5,
     amplitude: float = 0.35,
 ) -> LoadedGestureSounds:
     """Generate a short pygame Sound for every gesture token from the YAML mapping."""
 
-    mapping = load_gesture_sound_mapping(audio_config)
+    mapping = load_gesture_sound_mapping(
+        audio_config,
+        circles_per_hand=circles_per_hand,
+    )
     playback_config = _load_playback_config(audio_config)
     mixer_state = pygame_module.mixer.get_init()
     if mixer_state is None:
@@ -526,24 +538,23 @@ def _build_tone_sound(
     return pygame_module.mixer.Sound(buffer=interleaved.tobytes())
 
 
-def _load_fluidsynth_immediate_cue_config(audio_config: dict[str, Any]) -> FluidSynthImmediateCueConfig:
+def _load_fluidsynth_immediate_cue_config(
+    audio_config: dict[str, Any],
+    *,
+    circles_per_hand: int,
+) -> FluidSynthImmediateCueConfig:
     immediate_cues = audio_config.get("immediate_cues")
     immediate_cues_payload = immediate_cues if isinstance(immediate_cues, dict) else {}
     fluidsynth_payload = immediate_cues_payload.get("fluidsynth")
     fluidsynth_cfg = fluidsynth_payload if isinstance(fluidsynth_payload, dict) else {}
 
-    default_token_notes: dict[str, int] = {
-        "L1": 48,
-        "L2": 50,
-        "L3": 52,
-        "L4": 55,
-        "L5": 57,
-        "R1": 60,
-        "R2": 62,
-        "R3": 64,
-        "R4": 67,
-        "R5": 69,
-    }
+    normalized_count = normalize_circles_per_hand(circles_per_hand)
+    default_left_hand_notes = (48, 50, 52, 55, 57)
+    default_right_hand_notes = (60, 62, 64, 67, 69)
+    default_token_notes: dict[str, int] = {}
+    for lane_index in range(1, normalized_count + 1):
+        default_token_notes[f"L{lane_index}"] = default_left_hand_notes[lane_index - 1]
+        default_token_notes[f"R{lane_index}"] = default_right_hand_notes[lane_index - 1]
     configured_token_notes = fluidsynth_cfg.get("token_notes")
     raw_token_notes = configured_token_notes if isinstance(configured_token_notes, dict) else {}
     token_notes = {**default_token_notes}

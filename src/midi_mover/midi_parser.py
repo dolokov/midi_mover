@@ -4,14 +4,13 @@ from __future__ import annotations
 
 from bisect import bisect_right
 from dataclasses import dataclass
-import math
 from pathlib import Path
-from random import Random
 from typing import Any
 
+from midi_mover.gesture_tokens import build_gesture_tokens, normalize_circles_per_hand
 from midi_mover.midi_mapping_debug import build_mapping_state_debug_section
+from midi_mover.midi_token_mapping import build_adaptive_token_sequence, parse_gesture_token
 DEFAULT_TEMPO_US_PER_BEAT = 500_000
-GESTURE_TOKENS: tuple[str, ...] = ("L1", "L2", "L3", "L4", "L5", "R1", "R2", "R3", "R4", "R5")
 
 
 class MidiParseError(RuntimeError):
@@ -209,8 +208,15 @@ def map_playable_midi_notes_to_gesture_tokens(
     *,
     playable_notes: tuple[PlayableMidiNote, ...],
     midi_config: dict[str, Any],
+    circles_per_hand: int = 5,
 ) -> tuple[TokenMappedMidiNote, ...]:
-    note_mapping = _normalize_note_mapping_table(midi_config.get("note_mapping", {}))
+    allowed_tokens = build_gesture_tokens(circles_per_hand)
+    normalized_circles_per_hand = normalize_circles_per_hand(circles_per_hand)
+    note_mapping = _normalize_note_mapping_table(
+        midi_config.get("note_mapping", {}),
+        allowed_tokens=allowed_tokens,
+        circles_per_hand=normalized_circles_per_hand,
+    )
     adaptive_mode = _normalize_adaptive_mapping_config(midi_config.get("adaptive_mapping"))
 
     should_use_adaptive_mapping = False
@@ -219,9 +225,9 @@ def map_playable_midi_notes_to_gesture_tokens(
         should_use_adaptive_mapping = len(unique_note_numbers) > adaptive_mode["trigger_note_count"]
 
     if should_use_adaptive_mapping:
-        adaptive_tokens = _build_adaptive_token_sequence(
-            playable_notes=playable_notes,
-            rolling_recent_note_buffer_size=adaptive_mode["rolling_recent_note_buffer_size"],
+        adaptive_tokens = build_adaptive_token_sequence(
+            note_numbers=tuple(note.note_number for note in playable_notes),
+            allowed_tokens=allowed_tokens,
             adaptive_mode_variant=adaptive_mode["mode"],
             creative_seed=adaptive_mode["creative_seed"],
             creative_cycle_span=adaptive_mode["creative_cycle_span"],
@@ -253,6 +259,7 @@ def map_playable_midi_notes_to_gesture_tokens(
 def build_normalized_target_notes(
     *,
     mapped_notes: tuple[TokenMappedMidiNote, ...],
+    circles_per_hand: int = 5,
 ) -> tuple[NormalizedTargetNote, ...]:
     sorted_notes = sorted(
         mapped_notes,
@@ -266,8 +273,12 @@ def build_normalized_target_notes(
     )
 
     normalized: list[NormalizedTargetNote] = []
+    allowed_tokens = build_gesture_tokens(circles_per_hand)
     for index, mapped_note in enumerate(sorted_notes):
-        hand, lane = _parse_gesture_token(mapped_note.gesture_token)
+        try:
+            hand, lane = parse_gesture_token(mapped_note.gesture_token, allowed_tokens=allowed_tokens)
+        except ValueError as exc:
+            raise MidiParseError(str(exc)) from exc
         source = mapped_note.playable_note
         normalized.append(
             NormalizedTargetNote(
@@ -298,6 +309,7 @@ def build_midi_debug_report(
     *,
     midi_path: Path,
     midi_config: dict[str, Any],
+    circles_per_hand: int = 5,
     max_notes: int = 20,
 ) -> str:
     if max_notes <= 0:
@@ -308,8 +320,12 @@ def build_midi_debug_report(
     mapped_notes = map_playable_midi_notes_to_gesture_tokens(
         playable_notes=playable_notes,
         midi_config=midi_config,
+        circles_per_hand=circles_per_hand,
     )
-    normalized_notes = build_normalized_target_notes(mapped_notes=mapped_notes)
+    normalized_notes = build_normalized_target_notes(
+        mapped_notes=mapped_notes,
+        circles_per_hand=circles_per_hand,
+    )
 
     lines = [
         f"MIDI inspection report for: {midi_path}",
@@ -359,6 +375,7 @@ def build_midi_debug_report(
             playable_notes=playable_notes,
             mapped_notes=mapped_notes,
             midi_config=midi_config,
+            circles_per_hand=circles_per_hand,
             max_rows=max_notes,
         )
     )
@@ -441,10 +458,28 @@ def _normalize_optional_int_filter(*, raw_values: Any, key_name: str) -> set[int
 
 
 def _normalize_note_filter(note_mapping: Any) -> set[int]:
-    return set(_normalize_note_mapping_table(note_mapping).keys())
+    # Filtering is based on configured note numbers only; token validation is
+    # deferred to token-aware mapping steps.
+    if not isinstance(note_mapping, dict):
+        raise MidiParseError("midi.note_mapping must be a mapping of MIDI note numbers to gesture tokens.")
+    normalized: set[int] = set()
+    for raw_note_number in note_mapping.keys():
+        try:
+            normalized.add(int(raw_note_number))
+        except (TypeError, ValueError) as exc:
+            raise MidiParseError(
+                "midi.note_mapping contains an invalid MIDI note number key: "
+                f"{raw_note_number!r}."
+            ) from exc
+    return normalized
 
 
-def _normalize_note_mapping_table(note_mapping: Any) -> dict[int, str]:
+def _normalize_note_mapping_table(
+    note_mapping: Any,
+    *,
+    allowed_tokens: tuple[str, ...],
+    circles_per_hand: int,
+) -> dict[int, str]:
     if not isinstance(note_mapping, dict):
         raise MidiParseError("midi.note_mapping must be a mapping of MIDI note numbers to gesture tokens.")
 
@@ -459,14 +494,45 @@ def _normalize_note_mapping_table(note_mapping: Any) -> dict[int, str]:
             ) from exc
 
         token = str(raw_token).strip().upper()
-        if token not in GESTURE_TOKENS:
+        try:
+            token = _normalize_token_for_lane_count(
+                token,
+                circles_per_hand=circles_per_hand,
+            )
+        except ValueError as exc:
             raise MidiParseError(
                 "midi.note_mapping contains an invalid gesture token value "
-                f"for note {note_number}: {raw_token!r}. Expected one of {', '.join(GESTURE_TOKENS)}."
+                f"for note {note_number}: {raw_token!r}. Expected one of {', '.join(allowed_tokens)}."
+            ) from exc
+        if token not in allowed_tokens:
+            raise MidiParseError(
+                "midi.note_mapping contains an invalid gesture token value "
+                f"for note {note_number}: {raw_token!r}. Expected one of {', '.join(allowed_tokens)}."
             )
         normalized[note_number] = token
 
     return normalized
+
+
+def _normalize_token_for_lane_count(token: str, *, circles_per_hand: int) -> str:
+    """Clamp legacy lane tokens (e.g. L5) into active range for smaller lane counts.
+
+    This allows one static config to be reused across 3/4/5-circle modes by
+    remapping out-of-range lanes to the highest available lane on the same hand.
+    """
+    if len(token) < 2:
+        raise ValueError("Gesture token is too short.")
+    hand = token[0].upper()
+    if hand not in {"L", "R"}:
+        raise ValueError("Gesture token must start with 'L' or 'R'.")
+    try:
+        lane = int(token[1:])
+    except ValueError as exc:
+        raise ValueError("Gesture token lane must be an integer suffix.") from exc
+    if lane < 1:
+        raise ValueError("Gesture token lane must be >= 1.")
+    clamped_lane = min(lane, int(circles_per_hand))
+    return f"{hand}{clamped_lane}"
 
 
 def _normalize_min_duration_ms(raw_value: Any) -> float:
@@ -548,55 +614,3 @@ def _normalize_adaptive_mapping_config(raw_config: Any) -> dict[str, Any]:
     }
 
 
-def _build_adaptive_token_sequence(
-    *,
-    playable_notes: tuple[PlayableMidiNote, ...],
-    rolling_recent_note_buffer_size: int,
-    adaptive_mode_variant: str,
-    creative_seed: int | None,
-    creative_cycle_span: int,
-) -> tuple[str, ...]:
-    if rolling_recent_note_buffer_size < 1:
-        raise MidiParseError("rolling_recent_note_buffer_size must be >= 1.")
-    _ = rolling_recent_note_buffer_size
-
-    token_sequence: list[str] = []
-    token_count = len(GESTURE_TOKENS)
-    creative_rng = Random(creative_seed) if creative_seed is not None else None
-    unique_note_numbers = sorted({note.note_number for note in playable_notes})
-    if not unique_note_numbers:
-        return tuple()
-    if len(unique_note_numbers) <= 1:
-        base_token_by_note = {unique_note_numbers[0]: 0}
-    else:
-        divisor = len(unique_note_numbers) - 1
-        base_token_by_note = {
-            note_number: int(round((rank * (token_count - 1)) / divisor))
-            for rank, note_number in enumerate(unique_note_numbers)
-        }
-
-    for note_index, playable_note in enumerate(playable_notes):
-        note_number = playable_note.note_number
-        token_index = base_token_by_note[note_number]
-
-        if adaptive_mode_variant == "creative_wave":
-            phase = (note_index % creative_cycle_span) / float(creative_cycle_span)
-            wave_offset = int(round(2.0 * math.sin(phase * 2.0 * math.pi)))
-            seeded_offset = creative_rng.choice((-1, 0, 1)) if creative_rng is not None else 0
-            token_index = max(0, min(token_count - 1, token_index + wave_offset + seeded_offset))
-
-        token_sequence.append(GESTURE_TOKENS[token_index])
-
-    return tuple(token_sequence)
-
-
-def _parse_gesture_token(token: str) -> tuple[str, int]:
-    normalized = str(token).strip().upper()
-    if normalized not in GESTURE_TOKENS:
-        raise MidiParseError(
-            f"Invalid gesture token {token!r}. Expected one of {', '.join(GESTURE_TOKENS)}."
-        )
-
-    hand = normalized[0]
-    lane = int(normalized[1])
-    return hand, lane

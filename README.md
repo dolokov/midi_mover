@@ -25,16 +25,17 @@ Definitions:
 - **right hand** = right wrist keypoint
 
 ### Circle layout
-There are exactly **5 circles** around the head.
+The number of circles per hand is configurable via YAML (`liveview.circles_per_hand`) and currently supports **3**, **4**, or **5**.
 
-Fixed circle numbering:
+Circle numbering is always left-to-right and starts at `1`.
+For 5-circle mode (default):
 - **1** = far left
 - **2** = upper-left
 - **3** = above head
 - **4** = upper-right
 - **5** = far right
 
-The numbering must be consistent across:
+The numbering/token model must be consistent across:
 - live overlay
 - timeline lanes
 - note logic
@@ -43,12 +44,15 @@ The numbering must be consistent across:
 - highscore metadata if needed
 
 ### Note identity
-Each target note is one of:
-- `L1`, `L2`, `L3`, `L4`, `L5`
-- `R1`, `R2`, `R3`, `R4`, `R5`
+Each target note is one of `L1..LN` / `R1..RN`, where `N = circles_per_hand`.
 
 Examples:
-- `R4` = right hand, circle 4
+- 3-circle mode: `L1..L3`, `R1..R3`
+- 4-circle mode: `L1..L4`, `R1..R4`
+- 5-circle mode: `L1..L5`, `R1..R5`
+
+Example semantics:
+- `R4` = right hand, circle 4 (when circle 4 exists in the selected mode)
 - `L1` = left hand, circle 1
 
 ### Gameplay screen layout

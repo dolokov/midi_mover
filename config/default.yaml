@@ -106,25 +106,42 @@ liveview:
       fingertip_radius: 6
       fingertip_outline_color: [131, 24, 67]
       fingertip_outline_width: 2
+  circles_per_hand: 3
   circle_radius_percent: 5.83
-  # Left-hand circles — positions reachable by the left hand.
-  # All offsets are percentages relative to the eye-distance-based scale unit,
-  # anchored to the detected head center. Negative x = left, negative y = up.
-  left_circle_offsets_percent:
-    "1": [-10, -30.0]
-    "2": [-24, -25.0]
-    "3": [-34, -13.0]
-    "4": [-40, -2.0]
-    "5": [-40, 10.0]
-  # Right-hand circles — positions reachable by the right hand.
-  # Overlaps with left-hand circles are allowed: each circle only responds
-  # to its own hand's fingertips.
-  right_circle_offsets_percent:
-    "1": [10.0, -30.0]
-    "2": [24.0, -25.0]
-    "3": [34.0, -13.0]
-    "4": [40.0, -2.0]
-    "5": [40.0, 10.0]
+  # Circle offsets are grouped by selected circles_per_hand mode ('3', '4', '5').
+  # Negative x = left, positive x = right. Negative y = above head.
+  left_circle_offsets_percent_by_count:
+    "3":
+      "1": [-28.0, -20.0]
+      "2": [-38.0, -6.0]
+      "3": [-36.0, 10.0]
+    "4":
+      "1": [-16.0, -27.0]
+      "2": [-30.0, -19.0]
+      "3": [-38.0, -6.0]
+      "4": [-38.0, 11.0]
+    "5":
+      "1": [-10.0, -30.0]
+      "2": [-24.0, -25.0]
+      "3": [-34.0, -13.0]
+      "4": [-40.0, -2.0]
+      "5": [-40.0, 10.0]
+  right_circle_offsets_percent_by_count:
+    "3":
+      "1": [28.0, -20.0]
+      "2": [38.0, -6.0]
+      "3": [36.0, 10.0]
+    "4":
+      "1": [16.0, -27.0]
+      "2": [30.0, -19.0]
+      "3": [38.0, -6.0]
+      "4": [38.0, 11.0]
+    "5":
+      "1": [10.0, -30.0]
+      "2": [24.0, -25.0]
+      "3": [34.0, -13.0]
+      "4": [40.0, -2.0]
+      "5": [40.0, 10.0]
 
   circle_stroke_width: 4
   label_font_size: 24
