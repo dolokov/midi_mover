@@ -18,6 +18,7 @@ class StartupOptions:
     smoke_test: bool
     midi_inspect: bool
     midi_inspect_max_notes: int
+    record: bool
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -92,6 +93,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=20,
         help="Maximum number of converted notes to print in --midi-inspect mode. Default: 20.",
     )
+    parser.add_argument(
+        "--record",
+        action="store_true",
+        help=(
+            "Record the game window with audio output and save an MP4 to "
+            "~/data/midi_mover/recordings when gameplay exits (including Ctrl+C)."
+        ),
+    )
     return parser
 
 
@@ -158,4 +167,5 @@ def parse_args(argv: list[str] | None = None) -> StartupOptions:
         smoke_test=bool(namespace.smoke_test),
         midi_inspect=bool(namespace.midi_inspect),
         midi_inspect_max_notes=midi_inspect_max_notes,
+        record=bool(namespace.record),
     )

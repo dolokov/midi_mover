@@ -211,7 +211,7 @@ audio:
     polyphony: 256
     audio_driver: null
     audio_buffer_size: 64
-    instrument_profile: synth_lead #null
+    instrument_profile: concert_piano #synth_lead #null
     reverb:
       enabled: true
       room_size: 0.35
@@ -254,6 +254,139 @@ audio:
             level: 1.8
             speed: 0.55
             depth_ms: 11.0
+            waveform: triangle
+      electric_piano:
+        channels:
+          "0": { bank: 0, program: 4 }
+        effects:
+          reverb:
+            enabled: true
+            room_size: 0.34
+            damping: 0.22
+            width: 0.58
+            level: 0.66
+          chorus:
+            enabled: true
+            voices: 3
+            level: 1.3
+            speed: 0.35
+            depth_ms: 7.0
+            waveform: sine
+      drawbar_organ:
+        channels:
+          "0": { bank: 0, program: 16 }
+        effects:
+          reverb:
+            enabled: true
+            room_size: 0.28
+            damping: 0.2
+            width: 0.52
+            level: 0.55
+          chorus:
+            enabled: true
+            voices: 3
+            level: 1.0
+            speed: 0.24
+            depth_ms: 5.5
+            waveform: sine
+      nylon_guitar:
+        channels:
+          "0": { bank: 0, program: 24 }
+        effects:
+          reverb:
+            enabled: true
+            room_size: 0.4
+            damping: 0.28
+            width: 0.6
+            level: 0.7
+          chorus:
+            enabled: false
+      finger_bass:
+        channels:
+          "0": { bank: 0, program: 33 }
+        effects:
+          reverb:
+            enabled: true
+            room_size: 0.2
+            damping: 0.18
+            width: 0.4
+            level: 0.45
+          chorus:
+            enabled: false
+      strings_ensemble:
+        channels:
+          "0": { bank: 0, program: 48 }
+        effects:
+          reverb:
+            enabled: true
+            room_size: 0.56
+            damping: 0.32
+            width: 0.86
+            level: 0.9
+          chorus:
+            enabled: true
+            voices: 4
+            level: 1.1
+            speed: 0.28
+            depth_ms: 9.0
+            waveform: sine
+      brass_section:
+        channels:
+          "0": { bank: 0, program: 61 }
+        effects:
+          reverb:
+            enabled: true
+            room_size: 0.38
+            damping: 0.3
+            width: 0.62
+            level: 0.68
+          chorus:
+            enabled: false
+      choir_aahs:
+        channels:
+          "0": { bank: 0, program: 52 }
+        effects:
+          reverb:
+            enabled: true
+            room_size: 0.6
+            damping: 0.3
+            width: 0.9
+            level: 0.95
+          chorus:
+            enabled: true
+            voices: 4
+            level: 1.4
+            speed: 0.25
+            depth_ms: 9.5
+            waveform: sine
+      flute:
+        channels:
+          "0": { bank: 0, program: 73 }
+        effects:
+          reverb:
+            enabled: true
+            room_size: 0.46
+            damping: 0.24
+            width: 0.7
+            level: 0.74
+          chorus:
+            enabled: false
+      warm_pad:
+        channels:
+          "0": { bank: 0, program: 89 }
+        effects:
+          reverb:
+            enabled: true
+            room_size: 0.62
+            damping: 0.38
+            width: 0.95
+            level: 0.98
+          chorus:
+            enabled: true
+            voices: 5
+            level: 1.6
+            speed: 0.22
+            depth_ms: 12.0
             waveform: triangle
     channel_instruments: {}
   mixer:

@@ -28,6 +28,7 @@ from midi_mover.midi_parser import MidiParseError, build_midi_debug_report
 from midi_mover.pose import GameplayKeypointTracker, PrimaryPersonTracker
 from midi_mover.highscore_handoff import run_post_song_highscore_handoff
 from midi_mover.song_intro import build_song_title, show_pre_song_title_screen
+from midi_mover.recording import ActiveRecording, RecordingError, start_window_recording
 from midi_mover.song_summary import SongCompleteSummary, show_song_complete_summary_screen
 from midi_mover.song_targets import load_normalized_target_notes_from_midi
 from midi_mover.runtime_loop import LiveviewRuntimeError, run_persistent_liveview_loop
@@ -381,6 +382,17 @@ def run_interactive_runtime(
     if not show_title_screen:
         LOGGER.info("Pre-song title-screen bootstrap was skipped.")
 
+    active_recording: ActiveRecording | None = None
+    if options.record:
+        try:
+            active_recording = start_window_recording(
+                window_title=str(config.raw["app"]["name"]),
+                fps=int(config.raw["app"]["target_fps"]),
+            )
+        except RecordingError as exc:
+            raise StartupError(str(exc)) from exc
+        LOGGER.info("Gameplay recording started: %s", active_recording.output_path)
+
     try:
         while True:
             round_index += 1
@@ -530,6 +542,12 @@ def run_interactive_runtime(
     except LiveviewRuntimeError as exc:
         raise StartupError(str(exc)) from exc
     finally:
+        if active_recording is not None:
+            try:
+                output_path = active_recording.finalize()
+                LOGGER.info("Gameplay recording finalized: %s", output_path)
+            except RecordingError:
+                LOGGER.exception("Failed to finalize gameplay recording cleanly.")
         try:
             song_audio_backend.shutdown()
         except SongAudioBackendError:
@@ -566,6 +584,9 @@ def run(argv: list[str] | None = None) -> int:
             run_smoke_test(options, config, resources)
         else:
             run_interactive_runtime(options, config, resources)
+    except KeyboardInterrupt:
+        LOGGER.info("Received Ctrl+C. Shutting down runtime and finalizing recording before exit.")
+        return 130
     except StartupError as exc:
         LOGGER.error("Startup initialization failed: %s", exc)
         return 3
