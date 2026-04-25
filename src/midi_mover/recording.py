@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import logging
 import os
 from pathlib import Path
 import re
@@ -20,28 +21,51 @@ class RecordingError(RuntimeError):
     """Raised when gameplay recording cannot be started or finalized."""
 
 
+LOGGER = logging.getLogger("midi_mover")
+
+
 @dataclass
 class ActiveRecording:
     """Handle for an active ffmpeg recording process."""
 
     process: subprocess.Popen[bytes]
     output_path: Path
+    capture_path: Path | None = None
     stderr_log_path: Path | None = None
     audio_process: subprocess.Popen[bytes] | None = None
     use_stdin_quit: bool = True
 
-    def finalize(self, timeout_seconds: float = 8.0) -> Path:
+    def finalize(self, timeout_seconds: float = 12.0) -> Path:
         """Stop ffmpeg and return the saved output path."""
 
         if self.process.poll() is not None:
+            if self.audio_process is not None:
+                _stop_subprocess_quietly(self.audio_process)
+                self.audio_process = None
             if self.process.returncode != 0:
+                if _ffmpeg_exit_can_be_salvaged(
+                    returncode=self.process.returncode,
+                    stderr_log_path=self.stderr_log_path,
+                    capture_path=_resolve_capture_path(self.capture_path, self.output_path),
+                ):
+                    LOGGER.warning(
+                        "Finalizing recording after ffmpeg exited with code %s; attempting salvage.",
+                        self.process.returncode,
+                    )
+                    return _finalize_recording_artifact(
+                        output_path=self.output_path,
+                        capture_path=_resolve_capture_path(self.capture_path, self.output_path),
+                    )
                 raise RecordingError(
                     _build_ffmpeg_failure_message(
                         prefix=f"ffmpeg recording exited unexpectedly with code {self.process.returncode}.",
                         stderr_log_path=self.stderr_log_path,
                     )
                 )
-            return self.output_path
+            return _finalize_recording_artifact(
+                output_path=self.output_path,
+                capture_path=_resolve_capture_path(self.capture_path, self.output_path),
+            )
 
         try:
             if self.use_stdin_quit and self.process.stdin is not None:
@@ -49,7 +73,29 @@ class ActiveRecording:
                 self.process.stdin.flush()
             else:
                 self.process.send_signal(signal.SIGINT)
+        except (BrokenPipeError, OSError, ValueError):
+            # Process may have already started shutting down.
+            pass
+
+        try:
+            if self.audio_process is not None:
+                # For parec->ffmpeg pipe mode, stopping the feeder early allows ffmpeg
+                # to receive EOF on pipe:0 and finalize quickly.
+                _stop_subprocess_quietly(self.audio_process)
+                self.audio_process = None
+
             self.process.wait(timeout=max(0.1, float(timeout_seconds)))
+        except subprocess.TimeoutExpired:
+            LOGGER.warning(
+                "ffmpeg did not exit within %.1fs during finalize; escalating shutdown.",
+                max(0.1, float(timeout_seconds)),
+            )
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=4.0)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait(timeout=2.0)
         except Exception:
             self.process.terminate()
             try:
@@ -60,15 +106,32 @@ class ActiveRecording:
         finally:
             if self.audio_process is not None:
                 _stop_subprocess_quietly(self.audio_process)
+                self.audio_process = None
 
         if self.process.returncode != 0:
+            if _ffmpeg_exit_can_be_salvaged(
+                returncode=self.process.returncode,
+                stderr_log_path=self.stderr_log_path,
+                capture_path=_resolve_capture_path(self.capture_path, self.output_path),
+            ):
+                LOGGER.warning(
+                    "ffmpeg finalize returned code %s; attempting salvage.",
+                    self.process.returncode,
+                )
+                return _finalize_recording_artifact(
+                    output_path=self.output_path,
+                    capture_path=_resolve_capture_path(self.capture_path, self.output_path),
+                )
             raise RecordingError(
                 _build_ffmpeg_failure_message(
                     prefix=f"ffmpeg recording finalize failed with code {self.process.returncode}.",
                     stderr_log_path=self.stderr_log_path,
                 )
             )
-        return self.output_path
+        return _finalize_recording_artifact(
+            output_path=self.output_path,
+            capture_path=_resolve_capture_path(self.capture_path, self.output_path),
+        )
 
 
 def start_window_recording(*, window_title: str, fps: int) -> ActiveRecording:
@@ -80,7 +143,7 @@ def start_window_recording(*, window_title: str, fps: int) -> ActiveRecording:
 
     display = str(os.environ.get("DISPLAY", ":0.0")).strip() or ":0.0"
     x, y, width, height = _resolve_window_geometry(window_title=window_title, display=display)
-    output_path = _build_output_path()
+    output_path, capture_path = _build_output_paths()
     stderr_log_path = Path(
         tempfile.mkstemp(prefix="midi_mover_ffmpeg_recording_", suffix=".log")[1]
     )
@@ -97,6 +160,7 @@ def start_window_recording(*, window_title: str, fps: int) -> ActiveRecording:
         height=height,
         fps=fps,
         output_path=output_path,
+        capture_path=capture_path,
         audio_source=audio_source,
         pulse_supported=pulse_supported,
     )
@@ -124,6 +188,7 @@ def start_window_recording(*, window_title: str, fps: int) -> ActiveRecording:
                 ],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
+                start_new_session=True,
             )
         except OSError as exc:
             raise RecordingError(f"Failed to start parec fallback for audio capture: {exc}") from exc
@@ -142,6 +207,7 @@ def start_window_recording(*, window_title: str, fps: int) -> ActiveRecording:
                 stdin=stdin_for_ffmpeg,
                 stdout=subprocess.DEVNULL,
                 stderr=stderr_log_file,
+                start_new_session=True,
             )
         finally:
             stderr_log_file.close()
@@ -167,6 +233,7 @@ def start_window_recording(*, window_title: str, fps: int) -> ActiveRecording:
     return ActiveRecording(
         process=process,
         output_path=output_path,
+        capture_path=capture_path,
         stderr_log_path=stderr_log_path,
         audio_process=audio_process,
         use_stdin_quit=use_stdin_quit,
@@ -183,6 +250,7 @@ def _build_ffmpeg_command(
     height: int,
     fps: int,
     output_path: Path,
+    capture_path: Path,
     audio_source: str,
     pulse_supported: bool,
 ) -> list[str]:
@@ -214,7 +282,7 @@ def _build_ffmpeg_command(
             "aac",
             "-movflags",
             "+faststart",
-            str(output_path),
+            str(capture_path),
         ]
     )
     return command
@@ -227,6 +295,106 @@ def _build_ffmpeg_failure_message(*, prefix: str, stderr_log_path: Path | None) 
     if not details:
         return prefix
     return f"{prefix} ffmpeg output: {details}"
+
+
+def _ffmpeg_exit_can_be_salvaged(
+    *,
+    returncode: int | None,
+    stderr_log_path: Path | None,
+    capture_path: Path,
+) -> bool:
+    if returncode is None:
+        return False
+    if returncode not in (130, 255, -2, -9):
+        return False
+    if not _output_file_is_nonempty(capture_path):
+        return False
+    if returncode in (130, 255, -2):
+        return _stderr_indicates_normal_signal_exit(stderr_log_path)
+    # returncode -9 can occur during forced shutdown when capture data already exists.
+    return not _stderr_indicates_fatal_ffmpeg_error(stderr_log_path)
+
+
+def _stderr_indicates_normal_signal_exit(stderr_log_path: Path | None) -> bool:
+    if stderr_log_path is None:
+        return False
+    details = _read_stderr_log_excerpt(stderr_log_path, max_lines=30)
+    if not details:
+        return False
+    normalized = details.lower()
+    if "exiting normally" not in normalized:
+        return False
+    return "received signal 2" in normalized or "received signal 15" in normalized
+
+
+def _stderr_indicates_fatal_ffmpeg_error(stderr_log_path: Path | None) -> bool:
+    if stderr_log_path is None:
+        return False
+    details = _read_stderr_log_excerpt(stderr_log_path, max_lines=80)
+    if not details:
+        return False
+    normalized = details.lower()
+    fatal_markers = (
+        "conversion failed",
+        "error initializing",
+        "invalid argument",
+        "could not write header",
+        "error while opening",
+        "failed to inject frame",
+        "error while filtering",
+        "could not find",
+        "no such file or directory",
+    )
+    return any(marker in normalized for marker in fatal_markers)
+
+
+def _output_file_is_nonempty(output_path: Path) -> bool:
+    try:
+        return output_path.is_file() and output_path.stat().st_size > 0
+    except OSError:
+        return False
+
+
+def _resolve_capture_path(capture_path: Path | None, output_path: Path) -> Path:
+    if capture_path is not None:
+        return capture_path
+    return output_path
+
+
+def _finalize_recording_artifact(*, output_path: Path, capture_path: Path) -> Path:
+    if capture_path == output_path:
+        return output_path
+
+    remux_command = [
+        shutil.which("ffmpeg") or "ffmpeg",
+        "-y",
+        "-i",
+        str(capture_path),
+        "-c",
+        "copy",
+        "-movflags",
+        "+faststart",
+        str(output_path),
+    ]
+    remux_result = subprocess.run(remux_command, check=False, capture_output=True, text=True)
+    if remux_result.returncode == 0 and _output_file_is_nonempty(output_path):
+        try:
+            capture_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return output_path
+
+    LOGGER.warning(
+        "Failed to remux recording capture to MP4; keeping MKV capture file instead. stderr=%s",
+        " | ".join(
+            line.strip()
+            for line in remux_result.stderr.splitlines()[-8:]
+            if line.strip()
+        )
+        if remux_result.stderr
+        else "<none>",
+    )
+    return capture_path
 
 
 def _read_stderr_log_excerpt(path: Path, max_lines: int = 10) -> str:
@@ -267,11 +435,12 @@ def _stop_subprocess_quietly(process: subprocess.Popen[bytes]) -> None:
         process.wait(timeout=1.5)
 
 
-def _build_output_path() -> Path:
+def _build_output_paths() -> tuple[Path, Path]:
     recordings_dir = Path("~/data/midi_mover/recordings").expanduser().resolve()
     recordings_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%dT%H%M%S")
-    return recordings_dir / f"midi_mover_{timestamp}.mp4"
+    base = recordings_dir / f"midi_mover_{timestamp}"
+    return base.with_suffix(".mp4"), base.with_suffix(".mkv")
 
 
 def _resolve_window_geometry(*, window_title: str, display: str) -> tuple[int, int, int, int]:
