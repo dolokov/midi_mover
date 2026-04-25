@@ -373,6 +373,7 @@ class PrimaryPersonTracker:
     def select(self, result: Any, now_monotonic: float | None = None) -> PrimaryPersonSelection | None:
         timestamp = time.monotonic() if now_monotonic is None else float(now_monotonic)
         candidates = extract_pose_candidates(result, self._confidence_threshold)
+        frame_center_x = _extract_frame_center_x(result)
         if not candidates:
             if self._last_selection is not None:
                 age = timestamp - self._last_selection.selected_at_monotonic
@@ -381,7 +382,11 @@ class PrimaryPersonTracker:
             self._last_selection = None
             return None
 
-        selected, reason = self._choose_candidate(candidates, timestamp)
+        selected, reason = self._choose_candidate(
+            candidates,
+            timestamp,
+            frame_center_x,
+        )
         selection = PrimaryPersonSelection(
             candidate=selected,
             reason=reason,
@@ -394,6 +399,7 @@ class PrimaryPersonTracker:
         self,
         candidates: list[PoseCandidate],
         timestamp: float,
+        frame_center_x: float | None,
     ) -> tuple[PoseCandidate, str]:
         previous = self._last_selection
         if previous is not None and (timestamp - previous.selected_at_monotonic) <= self._lost_timeout_seconds:
@@ -427,6 +433,18 @@ class PrimaryPersonTracker:
                 reason = "matched previous target by track id" if best[1] else "matched previous target by proximity"
                 return best[-1], reason
 
+        if frame_center_x is not None:
+            centered = max(
+                candidates,
+                key=lambda candidate: (
+                    -abs(candidate.center_xy[0] - frame_center_x),
+                    candidate.confident_keypoint_count,
+                    candidate.area,
+                    candidate.confidence,
+                ),
+            )
+            return centered, "selected horizontally centered confident detection"
+
         fallback = max(
             candidates,
             key=lambda candidate: (
@@ -436,6 +454,23 @@ class PrimaryPersonTracker:
             ),
         )
         return fallback, "selected largest confident detection"
+
+
+def _extract_frame_center_x(result: Any) -> float | None:
+    """Return frame horizontal center from pose result metadata when available."""
+
+    orig_shape = getattr(result, "orig_shape", None)
+    if not isinstance(orig_shape, (list, tuple)) or len(orig_shape) < 2:
+        return None
+
+    try:
+        frame_width = float(orig_shape[1])
+    except (TypeError, ValueError):
+        return None
+
+    if frame_width <= 0.0:
+        return None
+    return frame_width / 2.0
 
 
 def _bbox_diagonal(bbox_xyxy: tuple[float, float, float, float]) -> float:
